@@ -42,6 +42,9 @@ from app.schemas.common import (
     SystemStatusOut,
     TaskStatusOut,
     JqDataRangeOut,
+    DataSourcesOut,
+    DataSourceOptionOut,
+    SetDataSourceIn,
 )
 from app.services.trade_calendar import (
     clamp_backtest_range,
@@ -92,9 +95,7 @@ async def reload_config():
 
     importlib.reload(config_mod)
     importlib.reload(factory_mod)
-    factory_mod.reset_adapter()
-    clear_concept_cache()
-    clear_trade_days_cache()
+    _reset_data_source_runtime()
     adapter = factory_mod.get_adapter()
     concepts, _ = get_cached_concepts(force_refresh=True)
     info = adapter_info()
@@ -104,6 +105,61 @@ async def reload_config():
         "concepts": len(concepts),
         **info,
     }
+
+
+def _build_data_sources() -> DataSourcesOut:
+    current = settings.effective_data_source()
+    try:
+        adapter_name = get_adapter().__class__.__name__
+    except RuntimeError:
+        adapter_name = "—"
+
+    def opt(sid: str, label: str, desc: str, configured: bool) -> DataSourceOptionOut:
+        return DataSourceOptionOut(
+            id=sid,
+            label=label,
+            description=desc,
+            configured=configured,
+            active=current == sid,
+        )
+
+    options = [
+        opt(
+            "auto",
+            "自动",
+            "优先聚宽，其次 Tushare，否则演示",
+            settings.jq_configured() or settings.tushare_configured(),
+        ),
+        opt(
+            "jqdata",
+            "聚宽 JQData",
+            "聚宽概念与行情（注意日配额）",
+            settings.jq_configured(),
+        ),
+        opt(
+            "tushare",
+            "Tushare Pro",
+            "同花顺概念板块（需 Token 与积分）",
+            settings.tushare_configured(),
+        ),
+        opt("demo", "演示数据", "本地合成，不消耗外部配额", True),
+    ]
+    return DataSourcesOut(current=current, active_adapter=adapter_name, options=options)
+
+
+def _reset_data_source_runtime() -> None:
+    import app.adapters.factory as factory_mod
+
+    from app.adapters.tushare_adapter import clear_tushare_caches
+    from app.services.concept_cache import clear_concept_cache
+    from app.services.stock_names import clear_name_cache
+    from app.services.trade_calendar import clear_trade_days_cache
+
+    factory_mod.reset_adapter()
+    clear_concept_cache()
+    clear_trade_days_cache()
+    clear_name_cache()
+    clear_tushare_caches()
 
 
 def _jq_range_out() -> Optional[JqDataRangeOut]:
@@ -117,6 +173,43 @@ def _jq_range_out() -> Optional[JqDataRangeOut]:
     )
 
 
+@router.get("/system/data-sources", response_model=DataSourcesOut)
+async def list_data_sources():
+    return _build_data_sources()
+
+
+@router.post("/system/data-source")
+async def set_data_source(body: SetDataSourceIn):
+    from app.services.data_source_store import VALID_SOURCES, write_override
+
+    src = body.source.lower().strip()
+    if src not in VALID_SOURCES:
+        raise HTTPException(400, detail=f"无效数据源，可选: {', '.join(sorted(VALID_SOURCES))}")
+    if src == "jqdata" and not settings.jq_configured():
+        raise HTTPException(400, detail="未配置聚宽账号，请在 .env 设置 JQDATA_USERNAME/PASSWORD")
+    if src == "tushare" and not settings.tushare_configured():
+        raise HTTPException(400, detail="未配置 Tushare，请在 .env 设置 TUSHARE_TOKEN")
+
+    write_override(src)
+    _reset_data_source_runtime()
+
+    from app.services.concept_cache import get_cached_concepts
+
+    try:
+        adapter = get_adapter()
+        concepts, _ = get_cached_concepts(force_refresh=True)
+        info = adapter_info()
+        return {
+            "message": f"已切换数据源为 {src}",
+            "adapter": adapter.__class__.__name__,
+            "concepts": len(concepts),
+            **info,
+            "data_sources": _build_data_sources().model_dump(),
+        }
+    except RuntimeError as exc:
+        raise HTTPException(502, detail=str(exc)) from exc
+
+
 @router.get("/system/status", response_model=SystemStatusOut)
 async def system_status():
     info = adapter_info()
@@ -127,7 +220,9 @@ async def system_status():
         is_live_data=info.get("is_live_data", False),
         data_source_label=info.get("data_source_label", ""),
         data_source_short=info.get("data_source_short", ""),
-        jq_configured=info["jq_configured"],
+        data_source=info.get("data_source", settings.effective_data_source()),
+        jq_configured=info.get("jq_configured", settings.jq_configured()),
+        tushare_configured=info.get("tushare_configured", settings.tushare_configured()),
         universe_total=info["universe_total"],
         ingest_max_concepts=settings.ingest_max_concepts,
         scan_task=TaskStatusOut(**scan.to_dict()),

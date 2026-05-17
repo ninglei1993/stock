@@ -63,13 +63,33 @@ class JqDataRangeOut(BaseModel):
     label: str
 
 
+class DataSourceOptionOut(BaseModel):
+    id: str
+    label: str
+    description: str
+    configured: bool
+    active: bool
+
+
+class DataSourcesOut(BaseModel):
+    current: str
+    active_adapter: str
+    options: list[DataSourceOptionOut]
+
+
+class SetDataSourceIn(BaseModel):
+    source: str
+
+
 class SystemStatusOut(BaseModel):
     adapter: str
     demo_mode: bool
     is_live_data: bool = False
     data_source_label: str = ""
     data_source_short: str = ""
-    jq_configured: bool
+    data_source: str = "auto"
+    jq_configured: bool = False
+    tushare_configured: bool = False
     universe_total: int
     ingest_max_concepts: int
     scan_task: TaskStatusOut

@@ -11,6 +11,12 @@ def _load_name_map() -> dict[str, str]:
     if settings.use_demo_data():
         return {}
     try:
+        provider = settings.resolved_live_provider()
+        if provider == "tushare":
+            from app.adapters.tushare_adapter import load_stock_name_map
+
+            return load_stock_name_map()
+
         from app.adapters.jqdata_adapter import _ensure_auth
         from app.adapters.rate_limiter import jqdata_limiter
 
@@ -35,3 +41,9 @@ def resolve_stock_names(stock_codes: list[str]) -> dict[str, str]:
 
 def clear_name_cache() -> None:
     _load_name_map.cache_clear()
+    try:
+        from app.adapters.tushare_adapter import load_stock_name_map
+
+        load_stock_name_map.cache_clear()
+    except ImportError:
+        pass

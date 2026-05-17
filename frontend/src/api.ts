@@ -74,13 +74,29 @@ export interface JqDataRange {
   label: string;
 }
 
+export interface DataSourceOption {
+  id: string;
+  label: string;
+  description: string;
+  configured: boolean;
+  active: boolean;
+}
+
+export interface DataSourcesResponse {
+  current: string;
+  active_adapter: string;
+  options: DataSourceOption[];
+}
+
 export interface SystemStatus {
   adapter: string;
   demo_mode: boolean;
   is_live_data: boolean;
   data_source_label: string;
   data_source_short: string;
+  data_source?: string;
   jq_configured: boolean;
+  tushare_configured?: boolean;
   universe_total: number;
   ingest_max_concepts: number;
   scan_task: TaskStatus;
@@ -195,6 +211,12 @@ export interface BacktestTrade {
 export const api = {
   health: () => fetchJson<{ status: string; adapter?: string; universe_total?: number }>("/health"),
   systemStatus: () => fetchJson<SystemStatus>("/system/status"),
+  dataSources: () => fetchJson<DataSourcesResponse>("/system/data-sources"),
+  setDataSource: (source: string) =>
+    fetchJson<{ message: string; adapter: string }>("/system/data-source", {
+      method: "POST",
+      body: JSON.stringify({ source }),
+    }),
   scanTaskStatus: () => fetchJson<TaskStatus>("/tasks/scan"),
   dashboard: () => fetchJson<Dashboard>("/dashboard"),
   listSectors: (tradeDate?: string, scoredOnly = true, includeAll = false) => {

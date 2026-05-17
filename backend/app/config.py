@@ -8,6 +8,7 @@ _BACKEND_DIR = Path(__file__).resolve().parent.parent
 _PROJECT_ROOT = _BACKEND_DIR.parent
 
 _PLACEHOLDER_USERS = frozenset({"", "your_phone_or_email", "your_password"})
+_PLACEHOLDER_TOKENS = frozenset({"", "your_tushare_token"})
 
 
 class Settings(BaseSettings):
@@ -36,6 +37,10 @@ class Settings(BaseSettings):
     # 聚宽账号数据权限区间（按运营说明默认值，可在 .env 覆盖）
     jqdata_data_start: date = date(2025, 2, 6)
     jqdata_data_end: date = date(2026, 2, 13)
+    # 数据源：auto | jqdata | tushare | demo（首页可覆盖 data_source.override.json）
+    data_source: str = "auto"
+    tushare_token: str = ""
+    tushare_rate_limit: float = 170.0
 
     def jq_configured(self) -> bool:
         return (
@@ -43,11 +48,39 @@ class Settings(BaseSettings):
             and self.jqdata_password not in _PLACEHOLDER_USERS
         )
 
+    def tushare_configured(self) -> bool:
+        return self.tushare_token not in _PLACEHOLDER_TOKENS
+
+    def effective_data_source(self) -> str:
+        from app.services.data_source_store import read_override
+
+        override = read_override()
+        if override:
+            return override
+        return (self.data_source or "auto").lower().strip()
+
     def use_demo_data(self) -> bool:
-        """已配置聚宽账号时强制使用 JQData，不再走演示数据。"""
-        if self.jq_configured():
+        ds = self.effective_data_source()
+        if ds == "demo":
+            return True
+        if ds in ("jqdata", "tushare"):
             return False
-        return self.demo_mode
+        # auto：未配置任何实盘源时用演示
+        return self.demo_mode and not self.jq_configured() and not self.tushare_configured()
+
+    def resolved_live_provider(self) -> str | None:
+        """返回 jqdata / tushare，或 None（走演示）。"""
+        ds = self.effective_data_source()
+        if ds == "jqdata":
+            return "jqdata"
+        if ds == "tushare":
+            return "tushare"
+        if ds == "auto":
+            if self.jq_configured():
+                return "jqdata"
+            if self.tushare_configured():
+                return "tushare"
+        return None
 
 
 settings = Settings()

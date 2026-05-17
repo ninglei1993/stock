@@ -700,6 +700,53 @@ tbody tr:hover {
   border-left: 3px solid #fbbf24;
 }
 
+.ds-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.5rem;
+}
+
+.ds-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.ds-option:hover:not(.ds-option-disabled) {
+  border-color: var(--border-hover);
+}
+
+.ds-option-active {
+  border-color: var(--accent);
+  background: rgba(96, 165, 250, 0.08);
+}
+
+.ds-option-disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ds-option span {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.ds-option strong {
+  font-size: 0.85rem;
+}
+
+.ds-option small {
+  font-size: 0.72rem;
+  color: var(--muted);
+  line-height: 1.3;
+}
+
 .task-status-bar {
   margin-bottom: 1rem;
   padding: 0.85rem 1.1rem;

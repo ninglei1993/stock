@@ -73,12 +73,12 @@ def warm_cache_background() -> None:
         try:
             from app.config import settings
 
-            if settings.jq_configured():
+            if settings.resolved_live_provider():
                 from app.adapters.factory import get_adapter
 
                 adapter = get_adapter()
-                if adapter.__class__.__name__ != "JQDataAdapter":
-                    logger.warning("Skip concept cache warm: not on JQData yet")
+                if adapter.__class__.__name__ == "DemoAdapter":
+                    logger.warning("Skip concept cache warm: demo mode")
                     return
             get_cached_concepts(force_refresh=True)
         except Exception as exc:

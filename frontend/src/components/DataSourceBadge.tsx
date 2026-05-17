@@ -8,7 +8,12 @@ export default function DataSourceBadge({ compact = false }: { compact?: boolean
     const load = () => api.systemStatus().then(setStatus).catch(() => {});
     load();
     const t = setInterval(load, 15000);
-    return () => clearInterval(t);
+    const onDs = () => load();
+    window.addEventListener("themeradar:data-source-changed", onDs);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener("themeradar:data-source-changed", onDs);
+    };
   }, []);
 
   if (!status) return null;
@@ -20,7 +25,7 @@ export default function DataSourceBadge({ compact = false }: { compact?: boolean
     return (
       <span className={cls} title={status.data_source_label}>
         <span className="ds-dot" />
-        {status.data_source_short || (live ? "聚宽" : "演示")}
+        {status.data_source_short || (live ? "实盘" : "演示")}
       </span>
     );
   }

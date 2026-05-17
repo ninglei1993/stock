@@ -1,4 +1,5 @@
 .env
+data_source.override.json
 .venv/
 __pycache__/
 *.pyc

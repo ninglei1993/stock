@@ -28,7 +28,7 @@ def clamp_to_jq_range(d: date) -> date:
 
 
 def should_use_jq_bounds() -> bool:
-    return settings.jq_configured() and not settings.use_demo_data()
+    return settings.effective_data_source() == "jqdata"
 
 
 def resolve_scan_date(requested: Optional[date] = None) -> date:
@@ -38,12 +38,30 @@ def resolve_scan_date(requested: Optional[date] = None) -> date:
     - 聚宽模式：默认权限内最后一个交易日，超出范围则截断
     """
     if not should_use_jq_bounds():
-        return requested or date.today()
+        if requested is not None:
+            return requested
+        return _latest_open_trade_day()
 
     if requested is not None:
         return clamp_to_jq_range(requested)
 
     return latest_trade_day_in_range()
+
+
+def _latest_open_trade_day() -> date:
+    from datetime import timedelta
+
+    from app.adapters.factory import get_adapter
+
+    today = date.today()
+    try:
+        adapter = get_adapter()
+        days = adapter.get_trade_days(today - timedelta(days=30), today)
+        if days:
+            return days[-1]
+    except Exception:
+        pass
+    return today
 
 
 @lru_cache(maxsize=1)

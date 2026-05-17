@@ -24,8 +24,10 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://themeradar:themeradar@postgres:5432/themeradar
       DATABASE_URL_SYNC: postgresql://themeradar:themeradar@postgres:5432/themeradar
+      DATA_SOURCE: ${DATA_SOURCE:-auto}
       JQDATA_USERNAME: ${JQDATA_USERNAME:-}
       JQDATA_PASSWORD: ${JQDATA_PASSWORD:-}
+      TUSHARE_TOKEN: ${TUSHARE_TOKEN:-}
       DEMO_MODE: ${DEMO_MODE:-true}
       INGEST_MAX_CONCEPTS: ${INGEST_MAX_CONCEPTS:-50}
       JQDATA_DATA_START: ${JQDATA_DATA_START:-2025-02-06}

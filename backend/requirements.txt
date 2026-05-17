@@ -12,4 +12,5 @@ httpx==0.28.1
 pandas==2.2.3
 numpy==2.2.0
 jqdatasdk==1.9.7
+tushare>=1.4.0
 python-dateutil==2.9.0.post0

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, Dashboard as DashboardData, TaskStatus } from "../api";
 import DataSourceBadge from "../components/DataSourceBadge";
+import DataSourceSelector from "../components/DataSourceSelector";
 import { pctClass, formatPct, STAGE_LABEL, ENV_CONCLUSION_LABEL } from "../utils";
 
 export default function Dashboard() {
@@ -23,20 +24,36 @@ export default function Dashboard() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => {
-    load();
+  const refreshScanMeta = () => {
     api.systemStatus().then((s) => {
       if (s.default_scan_date) setScanDate(s.default_scan_date);
       if (s.jq_data_range) {
         setJqRangeLabel(s.jq_data_range.label);
         setJqMin(s.jq_data_range.start);
         setJqMax(s.jq_data_range.end);
+      } else {
+        setJqRangeLabel("");
+        setJqMin("");
+        setJqMax("");
       }
     });
+  };
+
+  useEffect(() => {
+    load();
+    refreshScanMeta();
+    const onDs = () => {
+      refreshScanMeta();
+      load();
+    };
+    window.addEventListener("themeradar:data-source-changed", onDs);
     const poll = () => api.scanTaskStatus().then(setScanTask).catch(() => {});
     poll();
     const t = setInterval(poll, 2000);
-    return () => clearInterval(t);
+    return () => {
+      clearInterval(t);
+      window.removeEventListener("themeradar:data-source-changed", onDs);
+    };
   }, []);
 
   const scanRunning = scanTask?.status === "running";
@@ -58,6 +75,7 @@ export default function Dashboard() {
 
   return (
     <>
+      <DataSourceSelector />
       <DataSourceBadge />
 
       <div className="card-glass" style={{ marginBottom: "1rem", padding: "0.85rem 1.1rem" }}>
