@@ -99,6 +99,11 @@ export default function SectorDetail() {
             <div style={{ fontFamily: "JetBrains Mono", fontSize: "1.1rem", fontWeight: 600, marginTop: "0.35rem" }}>
               {detail.leader.stock_code}
             </div>
+            {(detail.leader as { stock_name?: string }).stock_name && (
+              <div style={{ fontSize: "0.9rem", marginTop: "0.25rem" }}>
+                {(detail.leader as { stock_name?: string }).stock_name}
+              </div>
+            )}
           </div>
           <div style={{ textAlign: "right" }}>
             <div className="metric-label">连板 / 涨幅</div>
@@ -209,6 +214,7 @@ export default function SectorDetail() {
           <thead>
             <tr>
               <th>代码</th>
+              <th>名称</th>
               <th>涨跌幅</th>
               <th>涨停</th>
               <th>连板</th>
@@ -219,6 +225,7 @@ export default function SectorDetail() {
             {detail.stocks.map((s) => (
               <tr key={s.stock_code}>
                 <td style={{ fontFamily: "JetBrains Mono" }}>{s.stock_code}</td>
+                <td>{s.stock_name || "—"}</td>
                 <td className={pctClass(s.pct_change)}>{formatPct(s.pct_change)}</td>
                 <td>{s.is_limit_up ? <span className="text-up">涨停</span> : "—"}</td>
                 <td>{s.limit_up_streak > 0 ? `${s.limit_up_streak}板` : "—"}</td>

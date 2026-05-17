@@ -55,6 +55,8 @@ async def init_db() -> None:
         for col, col_type in [
             ("signal_date", "DATE"),
             ("sell_stock_code", "VARCHAR(32)"),
+            ("stock_name", "VARCHAR(64)"),
+            ("sell_stock_name", "VARCHAR(64)"),
             ("holding_days", "INTEGER"),
             ("trade_mode", "VARCHAR(32) DEFAULT '板块龙头个股'"),
         ]:

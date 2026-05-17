@@ -20,7 +20,8 @@ A 股主线预警 Web 系统：盘面先热，消息后吹；资金先进，散�
 ```bash
 cp .env.example .env
 # 可选：配置 JQDATA_USERNAME / JQDATA_PASSWORD，并设置 DEMO_MODE=false
-# INGEST_MAX_CONCEPTS=0 表示入库聚宽返回的全部概念板块（首次扫描较慢）
+# INGEST_MAX_CONCEPTS：单次扫描入库的概念数（默认 50）。0=全部约396个，极易耗尽聚宽「日100万条」配额
+# JQDATA_DATA_START / JQDATA_DATA_END：聚宽账号可查询的数据区间（默认 2025-02-06 ~ 2026-02-13）
 
 docker compose up --build
 ```
@@ -28,7 +29,7 @@ docker compose up --build
 - Web: http://localhost:3000
 - API: http://localhost:8000/docs
 
-首次使用：打开仪表盘 → **执行收盘扫描**。
+首次使用：打开仪表盘 → 选择**扫描交易日**（聚宽模式下默认为权限内最后交易日）→ **执行收盘扫描**。
 
 #### Docker 拉镜像超时（`context deadline exceeded`）
 
@@ -90,8 +91,19 @@ npm run dev
 
 ## 数据说明
 
-- 默认 `DEMO_MODE=true` 使用合成数据，无需聚宽账号即可演示全链路。
-- 配置 [JQData](https://www.joinquant.com/help/api/doc?name=JQDatadoc&id=9842) 后设置 `DEMO_MODE=false` 与账号密码。
+- 默认 `DEMO_MODE=true` 使用 **15 个内置演示概念**，股票代码为随机合成，**不可检索**。
+- 在 `.env` 填写聚宽账号后设 `DEMO_MODE=false`（或仅填有效账号，系统会自动切聚宽）。
+- `INGEST_MAX_CONCEPTS=0` 时入库**全部**聚宽概念（通常 300+）；首次扫描较慢。
+- 板块列表页展示聚宽概念全集；`GET /api/health` 可查看当前数据源与概念数量。
+
+### 已配置聚宽但仍显示「演示数据」？
+
+1. **`.env` 放在项目根目录**（与 `docker-compose.yml` 同级），不要只改 `config.py` 里的默认值。
+2. 确认 `DEMO_MODE=false`，账号密码无多余空格。
+3. **重启 API**：`docker compose restart api`（旧进程会缓存 DemoAdapter）。
+4. 打开 http://localhost:8000/api/health ，应看到 `adapter: JQDataAdapter`、`is_live_data: true`、`universe_total` 约 300+。
+5. 修改 `.env` 后也可 `POST /api/system/reload-config` 热加载（无需重建镜像）。
+6. 用 PyCharm 本地启动时，工作目录设为**项目根目录**或 `backend`，代码会从 `../.env` 读取。
 
 ## 免责声明
 

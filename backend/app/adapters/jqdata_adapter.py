@@ -77,7 +77,14 @@ class JQDataAdapter(MarketDataAdapter):
         ]
 
     def get_stock_quotes(
-        self, stock_codes: list[str], trade_date: date, sector_code: str = ""
+        self,
+        stock_codes: list[str],
+        trade_date: date,
+        sector_code: str = "",
+        *,
+        price_lookback_days: int = 12,
+        skip_flows: bool = False,
+        capital_flows: Optional[dict[str, list[float]]] = None,
     ) -> list[StockQuote]:
         if not stock_codes:
             return []
@@ -85,7 +92,7 @@ class JQDataAdapter(MarketDataAdapter):
         jqdata_limiter.acquire_sync()
         import jqdatasdk as jq
 
-        start = trade_date - timedelta(days=15)
+        start = trade_date - timedelta(days=max(price_lookback_days, 3))
         df = jq.get_price(
             stock_codes,
             start_date=_to_date_str(start),
@@ -98,7 +105,12 @@ class JQDataAdapter(MarketDataAdapter):
         if df is None or df.empty:
             return []
 
-        flows = self.get_capital_flows(stock_codes, trade_date, lookback=1)
+        if capital_flows is not None:
+            flows = capital_flows
+        elif skip_flows:
+            flows = {}
+        else:
+            flows = self.get_capital_flows(stock_codes, trade_date, lookback=1)
         results: list[StockQuote] = []
         for code in stock_codes:
             sub = df[df["code"] == code] if "code" in df.columns else df
@@ -227,8 +239,10 @@ class JQDataAdapter(MarketDataAdapter):
         import jqdatasdk as jq
 
         all_stocks = jq.get_all_securities(types=["stock"], date=trade_date)
-        codes = list(all_stocks.index[:500])
-        quotes = self.get_stock_quotes(codes, trade_date)
+        codes = list(all_stocks.index[:100])
+        quotes = self.get_stock_quotes(
+            codes, trade_date, price_lookback_days=3, skip_flows=True
+        )
         up = sum(1 for q in quotes if q.pct_change > 0)
         down = sum(1 for q in quotes if q.pct_change < 0)
         limit_up = sum(1 for q in quotes if q.is_limit_up)

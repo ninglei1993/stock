@@ -1,3 +1,4 @@
+import { useCallback, useState } from "react";
 import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
 import Dashboard from "./pages/Dashboard";
 import Alerts from "./pages/Alerts";
@@ -6,14 +7,22 @@ import Review from "./pages/Review";
 import Backtest from "./pages/Backtest";
 import Guide from "./pages/Guide";
 import Sectors from "./pages/Sectors";
+import DataSourceBadge from "./components/DataSourceBadge";
+import TaskStatusBar from "./components/TaskStatusBar";
 
 export default function App() {
+  const [refreshKey, setRefreshKey] = useState(0);
+  const onScanDone = useCallback(() => setRefreshKey((k) => k + 1), []);
+
   return (
     <BrowserRouter>
       <div className="app-layout">
         <aside className="sidebar">
           <h1>主线雷达</h1>
           <p className="tagline">盘面先热，消息后吹</p>
+          <div style={{ marginBottom: "1rem" }}>
+            <DataSourceBadge compact />
+          </div>
           <nav>
             <NavLink to="/" className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`} end>
               仪表盘
@@ -39,10 +48,11 @@ export default function App() {
           </p>
         </aside>
         <main className="main">
+          <TaskStatusBar onDone={onScanDone} />
           <Routes>
-            <Route path="/" element={<Dashboard />} />
+            <Route path="/" element={<Dashboard key={refreshKey} />} />
             <Route path="/alerts" element={<Alerts />} />
-            <Route path="/sectors-list" element={<Sectors />} />
+            <Route path="/sectors-list" element={<Sectors key={refreshKey} />} />
             <Route path="/sectors/:code" element={<SectorDetail />} />
             <Route path="/review" element={<Review />} />
             <Route path="/backtest" element={<Backtest />} />

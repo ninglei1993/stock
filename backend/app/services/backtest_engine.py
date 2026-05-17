@@ -18,6 +18,7 @@ from app.models.tables import (
 )
 from app.services.ingestion import IngestionService
 from app.services.scan_service import ScanService
+from app.services.stock_names import resolve_stock_name
 
 
 class BacktestEngine:
@@ -94,13 +95,16 @@ class BacktestEngine:
                         price = await self._entry_price(alert.sector_code, td, next_day)
                         if price is None:
                             continue
-                        leader = await self._leader(td, alert.sector_code)
+                        leader_code, leader_name = await self._leader_with_name(
+                            td, alert.sector_code
+                        )
                         positions[alert.sector_code] = {
                             "signal_date": td,
                             "entry_date": next_day or td,
                             "entry_price": price,
                             "sector_name": alert.sector_name,
-                            "stock_code": leader,
+                            "stock_code": leader_code,
+                            "stock_name": leader_name,
                             "alert_code": alert.alert_code,
                             "reason": alert.human_reason,
                             "stage": sector.stage,
@@ -124,7 +128,9 @@ class BacktestEngine:
                                         sector_code=alert.sector_code,
                                         sector_name=pos["sector_name"],
                                         stock_code=pos["stock_code"],
+                                        stock_name=pos.get("stock_name"),
                                         sell_stock_code=pos["stock_code"],
+                                        sell_stock_name=pos.get("stock_name"),
                                         alert_code=alert.alert_code,
                                         signal_date=pos["signal_date"],
                                         entry_date=pos["entry_date"],
@@ -160,7 +166,9 @@ class BacktestEngine:
                         sector_code=code,
                         sector_name=pos["sector_name"],
                         stock_code=pos["stock_code"],
+                        stock_name=pos.get("stock_name"),
                         sell_stock_code=pos["stock_code"],
+                        sell_stock_name=pos.get("stock_name"),
                         alert_code=pos["alert_code"],
                         signal_date=pos["signal_date"],
                         entry_date=pos["entry_date"],
@@ -230,7 +238,9 @@ class BacktestEngine:
             return quotes[0].open or quotes[0].close
         return None
 
-    async def _leader(self, trade_date: date, sector_code: str) -> str:
+    async def _leader_with_name(
+        self, trade_date: date, sector_code: str
+    ) -> tuple[str, str]:
         row = (
             await self.session.execute(
                 select(ThemeLeaderDaily).where(
@@ -240,9 +250,15 @@ class BacktestEngine:
             )
         ).scalar_one_or_none()
         if row:
-            return row.stock_code
+            name = row.stock_name or resolve_stock_name(row.stock_code)
+            return row.stock_code, name
         stocks = self.adapter.get_concept_stocks(sector_code, trade_date)
-        return stocks[0] if stocks else "000001.XSHE"
+        code = stocks[0] if stocks else "000001.XSHE"
+        return code, resolve_stock_name(code)
+
+    async def _leader(self, trade_date: date, sector_code: str) -> str:
+        code, _ = await self._leader_with_name(trade_date, sector_code)
+        return code
 
     async def _save_results(
         self,

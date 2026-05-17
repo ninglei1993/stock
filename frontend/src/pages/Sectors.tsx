@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, SectorList, SectorScore } from "../api";
+import DataSourceBadge from "../components/DataSourceBadge";
 import { STAGE_LABEL, POSITION_LABEL, pctClass, formatPct } from "../utils";
 
 const STAGES = ["", "sprout", "ferment", "climax", "decay", "dormant"];
@@ -11,13 +12,24 @@ export default function Sectors() {
   const [error, setError] = useState("");
   const [stageFilter, setStageFilter] = useState("");
   const [search, setSearch] = useState("");
+  const [showAll, setShowAll] = useState(false);
+  const [loadingAll, setLoadingAll] = useState(false);
 
-  useEffect(() => {
+  const load = (includeAll = false) => {
+    if (includeAll) setLoadingAll(true);
+    else setLoading(true);
     api
-      .listSectors()
+      .listSectors(undefined, true, includeAll)
       .then(setData)
       .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        setLoading(false);
+        setLoadingAll(false);
+      });
+  };
+
+  useEffect(() => {
+    load(false);
   }, []);
 
   const filtered = useMemo(() => {
@@ -35,24 +47,17 @@ export default function Sectors() {
     });
   }, [data, stageFilter, search]);
 
-  if (loading) return <div className="loading">加载中…</div>;
+  if (loading && !data) return <div className="loading">加载中…</div>;
   if (error) return <div className="error">{error}</div>;
 
   return (
     <>
       <h2 className="page-title">板块列表</h2>
+      <DataSourceBadge />
       <p className="page-subtitle">
-        展示当前扫描日全部已评分板块及五维得分。概念全集 {data?.universe_total ?? 0} 个，
-        已评分 {data?.sectors_scored ?? 0} 个
+        已扫描评分 <strong>{data?.sectors_scored ?? 0}</strong> 个
         {data?.trade_date ? ` · ${data.trade_date}` : ""}
       </p>
-
-      {data?.demo_mode && (
-        <div className="card-glass demo-banner" style={{ marginBottom: "1rem" }}>
-          <strong>演示模式</strong>：仅含内置 {data.universe_total} 个概念，行情为合成数据，不代表
-          2026 年真实半导体/算力走势。接入聚宽 JQData 后可扫描全市场概念。
-        </div>
-      )}
 
       <div className="form-row" style={{ marginBottom: "1rem" }}>
         <div className="form-group">
@@ -74,6 +79,17 @@ export default function Sectors() {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
+        <button
+          type="button"
+          className="btn btn-secondary"
+          disabled={loadingAll || showAll}
+          onClick={() => {
+            setShowAll(true);
+            load(true);
+          }}
+        >
+          {loadingAll ? "加载中…" : showAll ? "已显示全部概念" : "加载全部概念"}
+        </button>
       </div>
 
       {!data?.sectors.length ? (
@@ -121,8 +137,8 @@ export default function Sectors() {
 
 function SectorRow({ s }: { s: SectorScore }) {
   return (
-    <tr className={s.is_filtered ? "row-filtered" : ""}>
-      <td>{s.rank}</td>
+    <tr className={s.is_filtered ? "row-filtered" : !s.is_scored ? "row-unscored" : ""}>
+      <td>{s.is_scored ? s.rank : "—"}</td>
       <td>
         <div style={{ fontWeight: 600 }}>{s.sector_name}</div>
         <div style={{ fontSize: "0.72rem", color: "var(--muted)", fontFamily: "JetBrains Mono" }}>
@@ -133,10 +149,14 @@ function SectorRow({ s }: { s: SectorScore }) {
         )}
       </td>
       <td>
-        <span className={`stage-badge stage-${s.stage}`}>{STAGE_LABEL[s.stage] || s.stage}</span>
+        {s.is_scored ? (
+          <span className={`stage-badge stage-${s.stage}`}>{STAGE_LABEL[s.stage] || s.stage}</span>
+        ) : (
+          <span style={{ color: "var(--muted)", fontSize: "0.8rem" }}>未评分</span>
+        )}
       </td>
       <td>
-        <span className="score-cell">{s.total_score.toFixed(0)}</span>
+        <span className="score-cell">{s.is_scored ? s.total_score.toFixed(0) : "—"}</span>
       </td>
       <td className={pctClass(s.pct_change ?? 0)}>
         {s.pct_change !== undefined && s.pct_change !== null ? formatPct(s.pct_change) : "—"}

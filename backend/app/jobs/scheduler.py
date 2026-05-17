@@ -14,7 +14,9 @@ async def daily_scan_job() -> None:
     from app.services.ingestion import IngestionService
     from app.services.scan_service import ScanService
 
-    trade_date = datetime.now().date()
+    from app.services.trade_calendar import resolve_scan_date
+
+    trade_date = resolve_scan_date()
     logger.info("Starting daily scan for %s", trade_date)
     async with AsyncSessionLocal() as session:
         try:

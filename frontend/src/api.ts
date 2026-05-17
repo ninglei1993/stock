@@ -39,6 +39,7 @@ export interface SectorScore {
   pct_change?: number;
   is_filtered?: boolean;
   filter_reason?: string | null;
+  is_scored?: boolean;
 }
 
 export interface SectorList {
@@ -46,7 +47,45 @@ export interface SectorList {
   universe_total: number;
   sectors_scored: number;
   demo_mode: boolean;
+  is_live_data?: boolean;
+  data_source?: string;
+  data_source_label?: string;
+  data_source_short?: string;
+  jq_configured?: boolean;
   sectors: SectorScore[];
+}
+
+export interface TaskStatus {
+  task_type: string;
+  status: "idle" | "running" | "done" | "failed";
+  message: string;
+  trade_date?: string | null;
+  progress: number;
+  total: number;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error?: string | null;
+}
+
+export interface JqDataRange {
+  start: string;
+  end: string;
+  latest_trade_day: string;
+  label: string;
+}
+
+export interface SystemStatus {
+  adapter: string;
+  demo_mode: boolean;
+  is_live_data: boolean;
+  data_source_label: string;
+  data_source_short: string;
+  jq_configured: boolean;
+  universe_total: number;
+  ingest_max_concepts: number;
+  scan_task: TaskStatus;
+  jq_data_range?: JqDataRange | null;
+  default_scan_date?: string | null;
 }
 
 export interface Dashboard {
@@ -91,9 +130,10 @@ export interface SectorDetail {
   up_ratio: number;
   blow_up_rate: number;
   position_hint: string;
-  leader?: { stock_code: string; streak: number; pct_change: number };
+  leader?: { stock_code: string; stock_name?: string; streak: number; pct_change: number };
   stocks: Array<{
     stock_code: string;
+    stock_name?: string;
     pct_change: number;
     is_limit_up: boolean;
     limit_up_streak: number;
@@ -134,7 +174,9 @@ export interface BacktestTrade {
   sector_code: string;
   sector_name: string;
   stock_code: string;
+  stock_name?: string;
   sell_stock_code?: string;
+  sell_stock_name?: string;
   alert_code: string;
   alert_name_cn?: string;
   signal_date?: string;
@@ -151,11 +193,27 @@ export interface BacktestTrade {
 }
 
 export const api = {
-  health: () => fetchJson<{ status: string }>("/health"),
+  health: () => fetchJson<{ status: string; adapter?: string; universe_total?: number }>("/health"),
+  systemStatus: () => fetchJson<SystemStatus>("/system/status"),
+  scanTaskStatus: () => fetchJson<TaskStatus>("/tasks/scan"),
   dashboard: () => fetchJson<Dashboard>("/dashboard"),
-  listSectors: (tradeDate?: string) =>
-    fetchJson<SectorList>(`/sectors${tradeDate ? `?trade_date=${tradeDate}` : ""}`),
-  scanLatest: () => fetchJson<{ trade_date: string; sectors_scored: number }>("/scan/latest", { method: "POST" }),
+  listSectors: (tradeDate?: string, scoredOnly = true, includeAll = false) => {
+    const params = new URLSearchParams();
+    if (tradeDate) params.set("trade_date", tradeDate);
+    if (includeAll) params.set("scored_only", "false");
+    else if (scoredOnly) params.set("scored_only", "true");
+    const q = params.toString();
+    return fetchJson<SectorList>(`/sectors${q ? `?${q}` : ""}`);
+  },
+  scanLatest: (tradeDate?: string) => {
+    const q = tradeDate ? `?trade_date=${tradeDate}` : "";
+    return fetchJson<{
+      trade_date: string;
+      status?: string;
+      message?: string;
+      jq_data_range?: string;
+    }>(`/scan/latest${q}`, { method: "POST" });
+  },
   alerts: (tradeDate?: string) =>
     fetchJson<Alert[]>(`/alerts${tradeDate ? `?trade_date=${tradeDate}` : ""}`),
   sector: (code: string, tradeDate?: string) =>

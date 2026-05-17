@@ -12,6 +12,11 @@ import {
 } from "recharts";
 import { api, BacktestRun, BacktestReport, BacktestTrade } from "../api";
 import { pctClass, STRATEGY_LABEL, RUN_STATUS_LABEL } from "../utils";
+import {
+  SECTOR_SELECT_ALGO,
+  STOCK_SELECT_ALGO,
+  STRATEGY_RULES,
+} from "../constants/strategyAlgo";
 
 const STRATEGIES = [
   { id: "fish_body", name: STRATEGY_LABEL.fish_body },
@@ -20,6 +25,22 @@ const STRATEGIES = [
   { id: "top5_rotation", name: STRATEGY_LABEL.top5_rotation },
 ];
 
+function StrategyAlgoPanel({ strategyId }: { strategyId: string }) {
+  const rule = STRATEGY_RULES[strategyId] || STRATEGY_RULES.fish_body;
+  return (
+    <div className="card-glass strategy-algo" style={{ marginBottom: "1.5rem" }}>
+      <h3 style={{ fontSize: "1rem", marginBottom: "0.75rem" }}>回测算法说明</h3>
+      <pre className="algo-block">{SECTOR_SELECT_ALGO}</pre>
+      <pre className="algo-block">{STOCK_SELECT_ALGO}</pre>
+      <div className="algo-rule">
+        <strong>当前策略：{rule.name}</strong>
+        <div>买入条件：{rule.buy}</div>
+        <div>卖出条件：{rule.sell}</div>
+      </div>
+    </div>
+  );
+}
+
 export default function Backtest() {
   const { id } = useParams<{ id: string }>();
   const [runs, setRuns] = useState<BacktestRun[]>([]);
@@ -27,6 +48,8 @@ export default function Backtest() {
   const [trades, setTrades] = useState<BacktestTrade[]>([]);
   const [startDate, setStartDate] = useState("2024-04-01");
   const [endDate, setEndDate] = useState("2025-04-01");
+  const [jqMin, setJqMin] = useState("");
+  const [jqMax, setJqMax] = useState("");
   const [strategy, setStrategy] = useState("fish_body");
   const [submitting, setSubmitting] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -35,6 +58,14 @@ export default function Backtest() {
 
   useEffect(() => {
     loadRuns();
+    api.systemStatus().then((s) => {
+      if (!s.jq_data_range) return;
+      const { start, end } = s.jq_data_range;
+      setJqMin(start);
+      setJqMax(end);
+      setStartDate(start);
+      setEndDate(end);
+    });
   }, []);
 
   useEffect(() => {
@@ -86,26 +117,50 @@ export default function Backtest() {
     }
   };
 
+  const activeStrategy = report?.run?.strategy_id || strategy;
+
   return (
     <>
       <h2 className="page-title">回测中心</h2>
       {loadError && <div className="error card-glass">{loadError}</div>}
 
+      <StrategyAlgoPanel strategyId={activeStrategy} />
+
       {!id && (
         <div className="card-glass" style={{ marginBottom: "1.5rem" }}>
           <h3 style={{ fontSize: "1rem", marginBottom: "1rem" }}>新建回测</h3>
+          {jqMin && jqMax && (
+            <p style={{ fontSize: "0.8rem", color: "var(--muted)", marginBottom: "0.75rem" }}>
+              聚宽数据权限：{jqMin} ~ {jqMax}（超出范围将自动截断）
+            </p>
+          )}
           <div className="form-row">
             <div className="form-group">
               <label>开始日期</label>
-              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+              <input
+                type="date"
+                value={startDate}
+                min={jqMin || undefined}
+                max={jqMax || undefined}
+                onChange={(e) => setStartDate(e.target.value)}
+              />
             </div>
             <div className="form-group">
               <label>结束日期</label>
-              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+              <input
+                type="date"
+                value={endDate}
+                min={jqMin || undefined}
+                max={jqMax || undefined}
+                onChange={(e) => setEndDate(e.target.value)}
+              />
             </div>
             <div className="form-group">
               <label>策略</label>
-              <select value={strategy} onChange={(e) => setStrategy(e.target.value)}>
+              <select
+                value={strategy}
+                onChange={(e) => setStrategy(e.target.value)}
+              >
                 {STRATEGIES.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
@@ -126,11 +181,6 @@ export default function Backtest() {
             <div className="card-glass demo-banner" style={{ marginBottom: "1rem" }}>
               <strong>成交说明：</strong>
               {report.trade_mode_note}
-              {report.strategy_name_cn && (
-                <span style={{ display: "block", marginTop: "0.35rem" }}>
-                  当前策略：{report.strategy_name_cn}
-                </span>
-              )}
             </div>
           )}
           <div className="metric-grid" style={{ marginBottom: "1rem" }}>
@@ -171,60 +221,49 @@ export default function Backtest() {
             </ResponsiveContainer>
           </div>
           <div className="card-glass sectors-table-wrap">
-            <h3 style={{ marginBottom: "0.75rem", padding: "0 0.5rem" }}>交易明细（个股）</h3>
+            <h3 style={{ marginBottom: "0.75rem", padding: "0 0.5rem" }}>交易明细</h3>
             <table className="sectors-table">
               <thead>
                 <tr>
                   <th>板块</th>
-                  <th>标的类型</th>
                   <th>信号日</th>
                   <th>买入日</th>
                   <th>买入代码</th>
+                  <th>买入名称</th>
                   <th>买入价</th>
                   <th>卖出日</th>
                   <th>卖出代码</th>
+                  <th>卖出名称</th>
                   <th>卖出价</th>
                   <th>持仓天数</th>
                   <th>收益率</th>
-                  <th>触发信号</th>
+                  <th>信号</th>
                 </tr>
               </thead>
               <tbody>
                 {trades.map((t) => (
                   <tr key={t.id}>
-                    <td>
-                      <div>{t.sector_name}</div>
-                      <div style={{ fontSize: "0.7rem", color: "var(--muted)" }}>{t.sector_code}</div>
-                    </td>
-                    <td style={{ fontSize: "0.8rem" }}>{t.trade_mode || "板块龙头个股"}</td>
+                    <td>{t.sector_name}</td>
                     <td>{t.signal_date || "—"}</td>
-                    <td>
-                      {t.entry_date}
-                      <div style={{ fontSize: "0.68rem", color: "var(--muted)", display: "block" }}>
-                        {t.entry_timing_cn}
-                      </div>
-                    </td>
+                    <td>{t.entry_date}</td>
                     <td style={{ fontFamily: "JetBrains Mono" }}>{t.stock_code}</td>
+                    <td>{t.stock_name || "—"}</td>
                     <td>{t.entry_price.toFixed(2)}</td>
-                    <td>
-                      {t.exit_date || "—"}
-                      {t.exit_timing_cn && t.exit_date && (
-                        <div style={{ fontSize: "0.68rem", color: "var(--muted)" }}>{t.exit_timing_cn}</div>
-                      )}
-                    </td>
+                    <td>{t.exit_date || "—"}</td>
                     <td style={{ fontFamily: "JetBrains Mono" }}>{t.sell_stock_code || t.stock_code}</td>
+                    <td>{t.sell_stock_name || t.stock_name || "—"}</td>
                     <td>{t.exit_price != null ? t.exit_price.toFixed(2) : "—"}</td>
                     <td>{t.holding_days != null ? `${t.holding_days} 天` : "—"}</td>
                     <td className={pctClass(t.return_pct || 0)}>
-                      {t.return_pct !== undefined && t.return_pct !== null ? `${t.return_pct}%` : "—"}
+                      {t.return_pct != null ? `${t.return_pct}%` : "—"}
                     </td>
-                    <td style={{ fontSize: "0.8rem" }}>{t.alert_name_cn || t.alert_code}</td>
+                    <td>{t.alert_name_cn || t.alert_code}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
             {trades.length === 0 && (
-              <p style={{ padding: "1rem", color: "var(--muted)" }}>本区间无成交记录</p>
+              <p style={{ padding: "1rem", color: "var(--muted)" }}>本区间无成交</p>
             )}
           </div>
         </>

@@ -19,7 +19,7 @@ from app.models.tables import (
     StockDaily,
     ThemeLeaderDaily,
 )
-from app.adapters.factory import get_adapter
+from app.adapters.factory import adapter_info, get_adapter
 from app.config import settings
 from app.api.backtest_helpers import trade_to_out
 from app.labels import BACKTEST_TRADE_NOTE, STRATEGY_LABELS
@@ -35,10 +35,31 @@ from app.schemas.common import (
     MarketEnvOut,
     ReviewDayOut,
     SectorDetailOut,
+    ConceptOut,
     SectorListOut,
     SectorScoreOut,
     StockInSector,
+    SystemStatusOut,
+    TaskStatusOut,
+    JqDataRangeOut,
 )
+from app.services.trade_calendar import (
+    clamp_backtest_range,
+    jq_data_end,
+    jq_data_start,
+    jq_range_label,
+    latest_trade_day_in_range,
+    resolve_scan_date,
+    should_use_jq_bounds,
+)
+from app.services.task_status import (
+    fail_scan,
+    finish_scan,
+    get_scan_task,
+    start_scan,
+    update_scan_progress,
+)
+from app.services.stock_names import resolve_stock_name
 from app.services.backtest_engine import BacktestEngine
 from app.services.ingestion import IngestionService
 from app.services.scan_service import ScanService
@@ -55,23 +76,133 @@ async def _latest_trade_date(session: AsyncSession) -> Optional[date]:
 
 @router.get("/health")
 async def health():
-    return {"status": "ok", "product": "ThemeRadar"}
+    info = adapter_info()
+    return {"status": "ok", "product": "ThemeRadar", **info}
+
+
+@router.post("/system/reload-config")
+async def reload_config():
+    """修改 .env 后调用，重新加载聚宽连接与概念缓存（无需整容器重启）。"""
+    import importlib
+
+    import app.adapters.factory as factory_mod
+    import app.config as config_mod
+    from app.services.concept_cache import clear_concept_cache, get_cached_concepts
+    from app.services.trade_calendar import clear_trade_days_cache
+
+    importlib.reload(config_mod)
+    importlib.reload(factory_mod)
+    factory_mod.reset_adapter()
+    clear_concept_cache()
+    clear_trade_days_cache()
+    adapter = factory_mod.get_adapter()
+    concepts, _ = get_cached_concepts(force_refresh=True)
+    info = adapter_info()
+    return {
+        "message": "配置已重新加载",
+        "adapter": adapter.__class__.__name__,
+        "concepts": len(concepts),
+        **info,
+    }
+
+
+def _jq_range_out() -> Optional[JqDataRangeOut]:
+    if not should_use_jq_bounds():
+        return None
+    return JqDataRangeOut(
+        start=jq_data_start(),
+        end=jq_data_end(),
+        latest_trade_day=latest_trade_day_in_range(),
+        label=jq_range_label(),
+    )
+
+
+@router.get("/system/status", response_model=SystemStatusOut)
+async def system_status():
+    info = adapter_info()
+    scan = get_scan_task()
+    return SystemStatusOut(
+        adapter=info["adapter"],
+        demo_mode=info["demo_mode"],
+        is_live_data=info.get("is_live_data", False),
+        data_source_label=info.get("data_source_label", ""),
+        data_source_short=info.get("data_source_short", ""),
+        jq_configured=info["jq_configured"],
+        universe_total=info["universe_total"],
+        ingest_max_concepts=settings.ingest_max_concepts,
+        scan_task=TaskStatusOut(**scan.to_dict()),
+        jq_data_range=_jq_range_out(),
+        default_scan_date=resolve_scan_date(),
+    )
+
+
+@router.get("/tasks/scan", response_model=TaskStatusOut)
+async def scan_task_status():
+    return TaskStatusOut(**get_scan_task().to_dict())
+
+
+@router.get("/concepts", response_model=list[ConceptOut])
+async def list_all_concepts():
+    from app.services.concept_cache import get_cached_concepts
+
+    concepts, _ = get_cached_concepts()
+    return [ConceptOut(sector_code=c.code, sector_name=c.name) for c in concepts]
+
+
+async def _run_scan(trade_date: date) -> None:
+    from app.database import AsyncSessionLocal
+
+    td_str = str(trade_date)
+    start_scan(td_str, "正在入库概念板块行情…")
+    try:
+        async with AsyncSessionLocal() as session:
+            ingestion = IngestionService(session)
+            concepts = ingestion.adapter.list_concepts()
+            total = len(concepts)
+            if settings.ingest_max_concepts > 0:
+                total = min(total, settings.ingest_max_concepts)
+            update_scan_progress(0, total, f"正在入库 0/{total} 个概念…")
+            await ingestion.ingest_day(trade_date)
+            update_scan_progress(total, total, "正在计算五维评分与预警…")
+            scanner = ScanService(session)
+            scores = await scanner.run_scan(trade_date)
+            await session.commit()
+            finish_scan(len(scores), td_str)
+    except Exception as exc:
+        fail_scan(str(exc))
+        raise
 
 
 @router.post("/scan/latest")
-async def scan_latest(db: AsyncSession = Depends(get_db)):
-    from datetime import datetime
-
-    trade_date = datetime.now().date()
-    ingestion = IngestionService(db)
-    await ingestion.ingest_day(trade_date)
-    scanner = ScanService(db)
-    scores = await scanner.run_scan(trade_date)
-    return {"trade_date": str(trade_date), "sectors_scored": len(scores)}
+async def scan_latest(
+    background_tasks: BackgroundTasks,
+    trade_date: Optional[date] = Query(None, description="扫描交易日，须在聚宽权限范围内"),
+):
+    trade_date = resolve_scan_date(trade_date)
+    current = get_scan_task()
+    if current.status == "running":
+        return {
+            "trade_date": str(trade_date),
+            "status": "running",
+            "message": "已有扫描任务在执行中，请稍候",
+            "jq_data_range": jq_range_label() if should_use_jq_bounds() else None,
+        }
+    background_tasks.add_task(_run_scan, trade_date)
+    start_scan(str(trade_date), f"收盘扫描已启动（交易日 {trade_date}）…")
+    msg = f"正在扫描交易日 {trade_date}"
+    if should_use_jq_bounds():
+        msg += f"（聚宽权限 {jq_range_label()}）"
+    return {
+        "trade_date": str(trade_date),
+        "status": "started",
+        "message": msg,
+        "jq_data_range": jq_range_label() if should_use_jq_bounds() else None,
+    }
 
 
 @router.post("/scan/{trade_date}")
 async def trigger_scan(trade_date: date, db: AsyncSession = Depends(get_db)):
+    trade_date = resolve_scan_date(trade_date)
     ingestion = IngestionService(db)
     await ingestion.ingest_day(trade_date)
     scanner = ScanService(db)
@@ -147,67 +278,106 @@ async def list_alerts(
 @router.get("/sectors", response_model=SectorListOut)
 async def list_sectors(
     trade_date: Optional[date] = None,
+    scored_only: bool = Query(True, description="仅返回已扫描评分的板块（更快）"),
     db: AsyncSession = Depends(get_db),
 ):
+    from app.services.concept_cache import get_cached_concepts
+
     td = trade_date or await _latest_trade_date(db)
-    adapter = get_adapter()
-    universe_total = len(adapter.list_concepts())
-    if not td:
-        return SectorListOut(
-            trade_date=None,
-            universe_total=universe_total,
-            sectors_scored=0,
-            demo_mode=settings.demo_mode,
-            sectors=[],
-        )
+    info = adapter_info()
+    all_concepts: list = []
+    if not scored_only:
+        all_concepts, _ = get_cached_concepts()
+    universe_total = info.get("universe_total") or len(all_concepts)
 
-    scores = (
-        await db.execute(
-            select(SectorScoreDaily)
-            .where(SectorScoreDaily.trade_date == td)
-            .order_by(SectorScoreDaily.rank)
-        )
-    ).scalars().all()
+    score_map: dict[str, SectorScoreDaily] = {}
+    pct_map: dict[str, float] = {}
+    leader_map: dict[str, ThemeLeaderDaily] = {}
 
-    daily_rows = (
-        await db.execute(select(SectorDaily).where(SectorDaily.trade_date == td))
-    ).scalars().all()
-    pct_map = {r.sector_code: r.pct_change for r in daily_rows}
-
-    leaders = (
-        await db.execute(select(ThemeLeaderDaily).where(ThemeLeaderDaily.trade_date == td))
-    ).scalars().all()
-    leader_map = {l.sector_code: l for l in leaders}
-
-    sectors: list[SectorScoreOut] = []
-    for s in scores:
-        l = leader_map.get(s.sector_code)
-        sectors.append(
-            SectorScoreOut(
-                sector_code=s.sector_code,
-                sector_name=s.sector_name,
-                total_score=s.total_score,
-                stage=s.stage,
-                rank=s.rank,
-                persistence_score=s.persistence_score,
-                capital_score=s.capital_score,
-                breadth_score=s.breadth_score,
-                leader_score=s.leader_score,
-                relative_score=s.relative_score,
-                position_hint=s.position_hint,
-                leader_stock=l.stock_code if l else None,
-                leader_streak=l.limit_up_streak if l else None,
-                pct_change=pct_map.get(s.sector_code),
-                is_filtered=s.is_filtered,
-                filter_reason=s.filter_reason,
+    if td:
+        scores = (
+            await db.execute(
+                select(SectorScoreDaily).where(SectorScoreDaily.trade_date == td)
             )
+        ).scalars().all()
+        score_map = {s.sector_code: s for s in scores}
+        daily_rows = (
+            await db.execute(select(SectorDaily).where(SectorDaily.trade_date == td))
+        ).scalars().all()
+        pct_map = {r.sector_code: r.pct_change for r in daily_rows}
+        leaders = (
+            await db.execute(
+                select(ThemeLeaderDaily).where(ThemeLeaderDaily.trade_date == td)
+            )
+        ).scalars().all()
+        leader_map = {l.sector_code: l for l in leaders}
+
+    def _score_out(s: SectorScoreDaily) -> SectorScoreOut:
+        l = leader_map.get(s.sector_code)
+        return SectorScoreOut(
+            sector_code=s.sector_code,
+            sector_name=s.sector_name,
+            total_score=s.total_score,
+            stage=s.stage,
+            rank=s.rank,
+            persistence_score=s.persistence_score,
+            capital_score=s.capital_score,
+            breadth_score=s.breadth_score,
+            leader_score=s.leader_score,
+            relative_score=s.relative_score,
+            position_hint=s.position_hint,
+            leader_stock=l.stock_code if l else None,
+            leader_streak=l.limit_up_streak if l else None,
+            pct_change=pct_map.get(s.sector_code),
+            is_filtered=s.is_filtered,
+            filter_reason=s.filter_reason,
+            is_scored=True,
         )
+
+    scored_list: list[SectorScoreOut] = []
+    unscored_list: list[SectorScoreOut] = []
+
+    if scored_only:
+        scored_list = [_score_out(s) for s in sorted(score_map.values(), key=lambda x: x.rank)]
+    else:
+        scored_codes = set()
+        for c in all_concepts:
+            s = score_map.get(c.code)
+            if s:
+                scored_codes.add(c.code)
+                scored_list.append(_score_out(s))
+            else:
+                unscored_list.append(
+                    SectorScoreOut(
+                        sector_code=c.code,
+                        sector_name=c.name,
+                        total_score=0,
+                        stage="dormant",
+                        rank=0,
+                        persistence_score=0,
+                        capital_score=0,
+                        breadth_score=0,
+                        leader_score=0,
+                        relative_score=0,
+                        position_hint="observe",
+                        is_scored=False,
+                    )
+                )
+
+    scored_list.sort(key=lambda x: x.rank)
+    unscored_list.sort(key=lambda x: x.sector_name)
+    sectors = scored_list if scored_only else scored_list + unscored_list
 
     return SectorListOut(
         trade_date=td,
         universe_total=universe_total,
-        sectors_scored=len(sectors),
-        demo_mode=settings.demo_mode,
+        sectors_scored=len(scored_list),
+        demo_mode=info["demo_mode"],
+        is_live_data=info.get("is_live_data", False),
+        data_source=info["adapter"],
+        data_source_label=info.get("data_source_label", ""),
+        data_source_short=info.get("data_source_short", ""),
+        jq_configured=info["jq_configured"],
         sectors=sectors,
     )
 
@@ -337,6 +507,7 @@ async def sector_detail(
         position_hint=score.position_hint,
         leader={
             "stock_code": leader.stock_code,
+            "stock_name": leader.stock_name or resolve_stock_name(leader.stock_code),
             "streak": leader.limit_up_streak,
             "pct_change": leader.pct_change,
         }
@@ -345,6 +516,7 @@ async def sector_detail(
         stocks=[
             StockInSector(
                 stock_code=s.stock_code,
+                stock_name=resolve_stock_name(s.stock_code),
                 pct_change=s.pct_change,
                 is_limit_up=s.is_limit_up,
                 limit_up_streak=s.limit_up_streak,
@@ -417,10 +589,11 @@ async def create_backtest(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ):
+    start_date, end_date = clamp_backtest_range(body.start_date, body.end_date)
     run = BacktestRun(
         strategy_id=body.strategy_id,
-        start_date=body.start_date,
-        end_date=body.end_date,
+        start_date=start_date,
+        end_date=end_date,
         params=body.params,
         status="pending",
     )

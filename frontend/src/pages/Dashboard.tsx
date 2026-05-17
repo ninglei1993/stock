@@ -1,13 +1,18 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, Dashboard as DashboardData } from "../api";
+import { api, Dashboard as DashboardData, TaskStatus } from "../api";
+import DataSourceBadge from "../components/DataSourceBadge";
 import { pctClass, formatPct, STAGE_LABEL, ENV_CONCLUSION_LABEL } from "../utils";
 
 export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [scanning, setScanning] = useState(false);
+  const [scanTask, setScanTask] = useState<TaskStatus | null>(null);
   const [error, setError] = useState("");
+  const [scanDate, setScanDate] = useState("");
+  const [jqRangeLabel, setJqRangeLabel] = useState("");
+  const [jqMin, setJqMin] = useState("");
+  const [jqMax, setJqMax] = useState("");
 
   const load = () => {
     setLoading(true);
@@ -20,17 +25,29 @@ export default function Dashboard() {
 
   useEffect(() => {
     load();
+    api.systemStatus().then((s) => {
+      if (s.default_scan_date) setScanDate(s.default_scan_date);
+      if (s.jq_data_range) {
+        setJqRangeLabel(s.jq_data_range.label);
+        setJqMin(s.jq_data_range.start);
+        setJqMax(s.jq_data_range.end);
+      }
+    });
+    const poll = () => api.scanTaskStatus().then(setScanTask).catch(() => {});
+    poll();
+    const t = setInterval(poll, 2000);
+    return () => clearInterval(t);
   }, []);
 
+  const scanRunning = scanTask?.status === "running";
+
   const runScan = async () => {
-    setScanning(true);
+    setError("");
     try {
-      await api.scanLatest();
-      load();
+      await api.scanLatest(scanDate || undefined);
+      api.scanTaskStatus().then(setScanTask);
     } catch (e) {
       setError(e instanceof Error ? e.message : "扫描失败");
-    } finally {
-      setScanning(false);
     }
   };
 
@@ -41,6 +58,29 @@ export default function Dashboard() {
 
   return (
     <>
+      <DataSourceBadge />
+
+      <div className="card-glass" style={{ marginBottom: "1rem", padding: "0.85rem 1.1rem" }}>
+        <div className="form-row" style={{ alignItems: "flex-end", marginBottom: 0 }}>
+          <div className="form-group">
+            <label>扫描交易日</label>
+            <input
+              type="date"
+              value={scanDate}
+              min={jqMin || undefined}
+              max={jqMax || undefined}
+              onChange={(e) => setScanDate(e.target.value)}
+              disabled={scanRunning}
+            />
+          </div>
+          {jqRangeLabel && (
+            <span style={{ fontSize: "0.8rem", color: "var(--muted)", paddingBottom: "0.5rem" }}>
+              聚宽权限：{jqRangeLabel}
+            </span>
+          )}
+        </div>
+      </div>
+
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
         <h2 className="page-title" style={{ marginBottom: 0 }}>
           仪表盘
@@ -50,8 +90,8 @@ export default function Dashboard() {
             </span>
           )}
         </h2>
-        <button className="btn btn-primary" onClick={runScan} disabled={scanning}>
-          {scanning ? "扫描中…" : "执行收盘扫描"}
+        <button className="btn btn-primary" onClick={runScan} disabled={scanRunning || !scanDate}>
+          {scanRunning ? "后台扫描中…" : "执行收盘扫描"}
         </button>
       </div>
 
@@ -84,7 +124,9 @@ export default function Dashboard() {
       <h3 style={{ marginBottom: "1rem", fontSize: "1rem", color: "var(--muted)" }}>Top 5 主线</h3>
       {!data?.top_sectors?.length ? (
         <div className="card-glass">
-          <p style={{ color: "var(--muted)" }}>暂无数据，请点击「执行收盘扫描」</p>
+          <p style={{ color: "var(--muted)" }}>
+            暂无数据，请选择权限内交易日并点击「执行收盘扫描」
+          </p>
         </div>
       ) : (
         <div className="sector-grid">

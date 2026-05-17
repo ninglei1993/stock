@@ -622,6 +622,10 @@ tbody tr:hover {
   opacity: 0.65;
 }
 
+.sectors-table .row-unscored {
+  opacity: 0.45;
+}
+
 .filter-tag {
   font-size: 0.68rem;
   color: #fbbf24;
@@ -631,4 +635,119 @@ tbody tr:hover {
 .btn-link {
   font-size: 0.8rem;
   white-space: nowrap;
+}
+
+.strategy-algo .algo-block {
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 0.82rem;
+  line-height: 1.65;
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.2);
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--border);
+}
+
+.strategy-algo .algo-rule {
+  font-size: 0.88rem;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.strategy-algo .algo-rule div {
+  margin-top: 0.35rem;
+  color: var(--muted);
+}
+
+.ds-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+}
+
+.ds-badge.ds-live {
+  background: rgba(34, 197, 94, 0.12);
+  border-color: rgba(34, 197, 94, 0.45);
+  color: #4ade80;
+}
+
+.ds-badge.ds-demo {
+  background: rgba(251, 191, 36, 0.12);
+  border-color: rgba(251, 191, 36, 0.45);
+  color: #fbbf24;
+}
+
+.ds-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+
+.card-glass.ds-live {
+  border-left: 3px solid #22c55e;
+}
+
+.card-glass.ds-demo {
+  border-left: 3px solid #fbbf24;
+}
+
+.task-status-bar {
+  margin-bottom: 1rem;
+  padding: 0.85rem 1.1rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
+.task-status-bar.task-running {
+  background: rgba(96, 165, 250, 0.1);
+  border-color: rgba(96, 165, 250, 0.4);
+}
+
+.task-status-bar.task-failed {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.4);
+}
+
+.task-status-bar.task-done {
+  background: rgba(34, 197, 94, 0.08);
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+.task-progress-track {
+  margin-top: 0.65rem;
+  height: 4px;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.task-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.task-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(96, 165, 250, 0.3);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }

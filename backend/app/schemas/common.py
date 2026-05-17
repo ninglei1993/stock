@@ -4,12 +4,18 @@ from typing import Any, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class ConceptOut(BaseModel):
+    sector_code: str
+    sector_name: str
+
+
 class SectorScoreOut(BaseModel):
     sector_code: str
     sector_name: str
     total_score: float
     stage: str
     rank: int
+    is_scored: bool = True
     persistence_score: float
     capital_score: float
     breadth_score: float
@@ -30,7 +36,45 @@ class SectorListOut(BaseModel):
     universe_total: int
     sectors_scored: int
     demo_mode: bool
+    is_live_data: bool = False
+    data_source: str
+    data_source_label: str = ""
+    data_source_short: str = ""
+    jq_configured: bool
     sectors: list[SectorScoreOut]
+
+
+class TaskStatusOut(BaseModel):
+    task_type: str
+    status: str
+    message: str = ""
+    trade_date: Optional[str] = None
+    progress: int = 0
+    total: int = 0
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    error: Optional[str] = None
+
+
+class JqDataRangeOut(BaseModel):
+    start: date
+    end: date
+    latest_trade_day: date
+    label: str
+
+
+class SystemStatusOut(BaseModel):
+    adapter: str
+    demo_mode: bool
+    is_live_data: bool = False
+    data_source_label: str = ""
+    data_source_short: str = ""
+    jq_configured: bool
+    universe_total: int
+    ingest_max_concepts: int
+    scan_task: TaskStatusOut
+    jq_data_range: Optional[JqDataRangeOut] = None
+    default_scan_date: Optional[date] = None
 
 
 class MarketEnvOut(BaseModel):
@@ -66,6 +110,7 @@ class DashboardOut(BaseModel):
 
 class StockInSector(BaseModel):
     stock_code: str
+    stock_name: str = ""
     pct_change: float
     is_limit_up: bool
     limit_up_streak: int
@@ -144,7 +189,9 @@ class BacktestTradeOut(BaseModel):
     sector_code: str
     sector_name: str
     stock_code: str
+    stock_name: str = ""
     sell_stock_code: Optional[str] = None
+    sell_stock_name: str = ""
     alert_code: str
     alert_name_cn: str = ""
     signal_date: Optional[date] = None

@@ -15,6 +15,7 @@ from app.models.tables import (
     ThemeLeaderDaily,
 )
 from app.services.sector_aggregator import SectorAggregator
+from app.services.stock_names import resolve_stock_name
 
 
 class IngestionService:
@@ -57,14 +58,6 @@ class IngestionService:
             )
         )
 
-        if self.adapter.__class__.__name__ == "DemoAdapter":
-            quotes = self.adapter.get_sector_quotes(trade_date, codes)
-        else:
-            quotes = []
-            for code in codes:
-                q = self.aggregator.aggregate_sector(code, names[code], trade_date)
-                quotes.append(q)
-
         await self.session.execute(
             delete(SectorDaily).where(SectorDaily.trade_date == trade_date)
         )
@@ -78,72 +71,109 @@ class IngestionService:
             delete(ThemeLeaderDaily).where(ThemeLeaderDaily.trade_date == trade_date)
         )
 
-        for q in quotes:
-            net, inflow_days = self.aggregator.aggregate_flow(q.sector_code, trade_date)
-            self.session.add(
-                SectorDaily(
-                    trade_date=trade_date,
-                    sector_code=q.sector_code,
-                    sector_name=q.sector_name,
-                    pct_change=q.pct_change,
-                    open=q.open,
-                    close=q.close,
-                    high=q.high,
-                    low=q.low,
-                    volume=q.volume,
-                    money=q.money,
-                    limit_up_count=q.limit_up_count,
-                    big_yang_count=q.big_yang_count,
-                    up_count=q.up_count,
-                    total_count=q.total_count,
-                    blow_up_rate=q.blow_up_rate,
-                )
-            )
-            self.session.add(
-                SectorFlowDaily(
-                    trade_date=trade_date,
-                    sector_code=q.sector_code,
-                    net_inflow_main=net,
-                    inflow_days=inflow_days,
-                )
-            )
+        if self.adapter.__class__.__name__ == "DemoAdapter":
+            quotes = self.adapter.get_sector_quotes(trade_date, codes)
+            for q in quotes:
+                net, inflow_days = self.aggregator.aggregate_flow(q.sector_code, trade_date)
+                stocks = self.adapter.get_concept_stocks(q.sector_code, trade_date)
+                stock_quotes = self.adapter.get_stock_quotes(stocks, trade_date, q.sector_code)
+                await self._persist_sector_bundle(trade_date, q, net, inflow_days, stock_quotes)
+            await self.session.flush()
+            return
 
-            stocks = self.adapter.get_concept_stocks(q.sector_code, trade_date)
-            stock_quotes = self.adapter.get_stock_quotes(stocks, trade_date, q.sector_code)
-            leader = self._pick_leader(stock_quotes)
-            if leader:
-                self.session.add(
-                    ThemeLeaderDaily(
-                        trade_date=trade_date,
-                        sector_code=q.sector_code,
-                        stock_code=leader.stock_code,
-                        stock_name=leader.stock_code,
-                        limit_up_streak=leader.limit_up_streak,
-                        pct_change=leader.pct_change,
-                        money=leader.money,
-                    )
-                )
-            for sq in stock_quotes:
-                self.session.add(
-                    StockDaily(
-                        trade_date=trade_date,
-                        stock_code=sq.stock_code,
-                        sector_code=q.sector_code,
-                        open=sq.open,
-                        close=sq.close,
-                        high=sq.high,
-                        low=sq.low,
-                        pct_change=sq.pct_change,
-                        volume=sq.volume,
-                        money=sq.money,
-                        is_limit_up=sq.is_limit_up,
-                        is_big_yang=sq.is_big_yang,
-                        is_blow_up=sq.is_blow_up,
-                        limit_up_streak=sq.limit_up_streak,
-                    )
-                )
+        # 聚宽：每个概念只拉一次成分股 + 行情 + 资金流，避免重复请求耗尽日配额
+        for code in codes:
+            stocks = self.adapter.get_concept_stocks(code, trade_date)
+            if not stocks:
+                continue
+            flows = self.adapter.get_capital_flows(stocks, trade_date, lookback=5)
+            stock_quotes = self.adapter.get_stock_quotes(
+                stocks,
+                trade_date,
+                code,
+                price_lookback_days=12,
+                capital_flows=flows,
+            )
+            q = self.aggregator.aggregate_sector_from_quotes(
+                code, names[code], stock_quotes
+            )
+            net, inflow_days = self.aggregator.aggregate_flow_from_flows(flows)
+            await self._persist_sector_bundle(trade_date, q, net, inflow_days, stock_quotes)
 
         await self.session.flush()
+
+    async def _persist_sector_bundle(
+        self,
+        trade_date: date,
+        q,
+        net: float,
+        inflow_days: int,
+        stock_quotes: list[StockQuote],
+    ) -> None:
+        self.session.add(
+            SectorDaily(
+                trade_date=trade_date,
+                sector_code=q.sector_code,
+                sector_name=q.sector_name,
+                pct_change=q.pct_change,
+                open=q.open,
+                close=q.close,
+                high=q.high,
+                low=q.low,
+                volume=q.volume,
+                money=q.money,
+                limit_up_count=q.limit_up_count,
+                big_yang_count=q.big_yang_count,
+                up_count=q.up_count,
+                total_count=q.total_count,
+                blow_up_rate=q.blow_up_rate,
+            )
+        )
+        self.session.add(
+            SectorFlowDaily(
+                trade_date=trade_date,
+                sector_code=q.sector_code,
+                net_inflow_main=net,
+                inflow_days=inflow_days,
+            )
+        )
+
+        if not stock_quotes and self.adapter.__class__.__name__ != "DemoAdapter":
+            stocks = self.adapter.get_concept_stocks(q.sector_code, trade_date)
+            stock_quotes = self.adapter.get_stock_quotes(stocks, trade_date, q.sector_code)
+
+        leader = self._pick_leader(stock_quotes)
+        if leader:
+            self.session.add(
+                ThemeLeaderDaily(
+                    trade_date=trade_date,
+                    sector_code=q.sector_code,
+                    stock_code=leader.stock_code,
+                    stock_name=resolve_stock_name(leader.stock_code),
+                    limit_up_streak=leader.limit_up_streak,
+                    pct_change=leader.pct_change,
+                    money=leader.money,
+                )
+            )
+        for sq in stock_quotes:
+            self.session.add(
+                StockDaily(
+                    trade_date=trade_date,
+                    stock_code=sq.stock_code,
+                    sector_code=q.sector_code,
+                    open=sq.open,
+                    close=sq.close,
+                    high=sq.high,
+                    low=sq.low,
+                    pct_change=sq.pct_change,
+                    volume=sq.volume,
+                    money=sq.money,
+                    is_limit_up=sq.is_limit_up,
+                    is_big_yang=sq.is_big_yang,
+                    is_blow_up=sq.is_blow_up,
+                    limit_up_streak=sq.limit_up_streak,
+                )
+            )
 
     def _pick_leader(self, quotes: list[StockQuote]) -> StockQuote | None:
         if not quotes:

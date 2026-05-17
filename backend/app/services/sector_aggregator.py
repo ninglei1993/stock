@@ -1,20 +1,15 @@
 from datetime import date
 
-from app.adapters.base import MarketDataAdapter, SectorQuote
+from app.adapters.base import MarketDataAdapter, SectorQuote, StockQuote
 
 
 class SectorAggregator:
     def __init__(self, adapter: MarketDataAdapter):
         self.adapter = adapter
 
-    def aggregate_sector(
-        self, sector_code: str, sector_name: str, trade_date: date
+    def aggregate_sector_from_quotes(
+        self, sector_code: str, sector_name: str, quotes: list[StockQuote]
     ) -> SectorQuote:
-        stocks = self.adapter.get_concept_stocks(sector_code, trade_date)
-        if not stocks:
-            return SectorQuote(sector_code=sector_code, sector_name=sector_name)
-
-        quotes = self.adapter.get_stock_quotes(stocks, trade_date, sector_code)
         if not quotes:
             return SectorQuote(sector_code=sector_code, sector_name=sector_name)
 
@@ -43,11 +38,19 @@ class SectorAggregator:
             blow_up_rate=round(blow_rate, 4),
         )
 
-    def aggregate_flow(self, sector_code: str, trade_date: date) -> tuple[float, int]:
+    def aggregate_sector(
+        self, sector_code: str, sector_name: str, trade_date: date
+    ) -> SectorQuote:
         stocks = self.adapter.get_concept_stocks(sector_code, trade_date)
         if not stocks:
+            return SectorQuote(sector_code=sector_code, sector_name=sector_name)
+        quotes = self.adapter.get_stock_quotes(stocks, trade_date, sector_code)
+        return self.aggregate_sector_from_quotes(sector_code, sector_name, quotes)
+
+    @staticmethod
+    def aggregate_flow_from_flows(flows: dict[str, list[float]]) -> tuple[float, int]:
+        if not flows:
             return 0.0, 0
-        flows = self.adapter.get_capital_flows(stocks, trade_date, lookback=5)
         total = sum(f[-1] if f else 0 for f in flows.values())
         inflow_days = 0
         if flows:
@@ -57,3 +60,10 @@ class SectorAggregator:
                 if day_sum > 0:
                     inflow_days += 1
         return total, inflow_days
+
+    def aggregate_flow(self, sector_code: str, trade_date: date) -> tuple[float, int]:
+        stocks = self.adapter.get_concept_stocks(sector_code, trade_date)
+        if not stocks:
+            return 0.0, 0
+        flows = self.adapter.get_capital_flows(stocks, trade_date, lookback=5)
+        return self.aggregate_flow_from_flows(flows)
