@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: themeradar
+      POSTGRES_PASSWORD: themeradar
+      POSTGRES_DB: themeradar
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U themeradar"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://themeradar:themeradar@postgres:5432/themeradar
+      DATABASE_URL_SYNC: postgresql://themeradar:themeradar@postgres:5432/themeradar
+      JQDATA_USERNAME: ${JQDATA_USERNAME:-}
+      JQDATA_PASSWORD: ${JQDATA_PASSWORD:-}
+      DEMO_MODE: ${DEMO_MODE:-true}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+
+  web:
+    build: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:

@@ -1,0 +1,15 @@
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+psycopg2-binary==2.9.10
+alembic==1.14.0
+pydantic==2.10.3
+pydantic-settings==2.6.1
+redis==5.2.1
+apscheduler==3.10.4
+httpx==0.28.1
+pandas==2.2.3
+numpy==2.2.0
+jqdatasdk==1.9.7
+python-dateutil==2.9.0.post0
