@@ -45,7 +45,7 @@ export default function DataSourceSelector() {
         )}
       </div>
       <div className="ds-options">
-        {sources.options.map((o) => (
+        {sources.options.filter((o) => o.id !== "demo").map((o) => (
           <label
             key={o.id}
             className={`ds-option ${o.active ? "ds-option-active" : ""} ${!o.configured && o.id !== "demo" ? "ds-option-disabled" : ""}`}

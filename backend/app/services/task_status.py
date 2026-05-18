@@ -14,6 +14,9 @@ class TaskState:
     status: str  # idle | running | done | failed
     message: str = ""
     trade_date: Optional[str] = None
+    scan_start_date: Optional[str] = None
+    scan_end_date: Optional[str] = None
+    trade_days: list[str] = field(default_factory=list)
     progress: int = 0
     total: int = 0
     started_at: Optional[str] = None
@@ -26,6 +29,9 @@ class TaskState:
             "status": self.status,
             "message": self.message,
             "trade_date": self.trade_date,
+            "scan_start_date": self.scan_start_date,
+            "scan_end_date": self.scan_end_date,
+            "trade_days": self.trade_days,
             "progress": self.progress,
             "total": self.total,
             "started_at": self.started_at,
@@ -45,6 +51,9 @@ def get_scan_task() -> TaskState:
             status=_scan_task.status,
             message=_scan_task.message,
             trade_date=_scan_task.trade_date,
+            scan_start_date=_scan_task.scan_start_date,
+            scan_end_date=_scan_task.scan_end_date,
+            trade_days=list(_scan_task.trade_days),
             progress=_scan_task.progress,
             total=_scan_task.total,
             started_at=_scan_task.started_at,
@@ -53,24 +62,43 @@ def get_scan_task() -> TaskState:
         )
 
 
-def start_scan(trade_date: str, message: str = "收盘扫描进行中…") -> None:
+def start_scan(
+    trade_date: str,
+    message: str = "收盘扫描进行中…",
+    *,
+    total: int = 0,
+    scan_start_date: Optional[str] = None,
+    scan_end_date: Optional[str] = None,
+    trade_days: Optional[list[str]] = None,
+) -> None:
     with _lock:
         _scan_task.status = "running"
         _scan_task.message = message
         _scan_task.trade_date = trade_date
+        _scan_task.scan_start_date = scan_start_date
+        _scan_task.scan_end_date = scan_end_date
+        _scan_task.trade_days = list(trade_days or [])
         _scan_task.progress = 0
-        _scan_task.total = 0
+        _scan_task.total = max(0, total)
         _scan_task.started_at = datetime.utcnow().isoformat() + "Z"
         _scan_task.finished_at = None
         _scan_task.error = None
 
 
-def update_scan_progress(progress: int, total: int, message: Optional[str] = None) -> None:
+def update_scan_progress(
+    progress: int,
+    total: int,
+    message: Optional[str] = None,
+    *,
+    current_trade_date: Optional[str] = None,
+) -> None:
     with _lock:
         _scan_task.progress = progress
         _scan_task.total = total
         if message:
             _scan_task.message = message
+        if current_trade_date:
+            _scan_task.trade_date = current_trade_date
 
 
 def finish_scan(sectors_scored: int, trade_date: str) -> None:
@@ -78,6 +106,8 @@ def finish_scan(sectors_scored: int, trade_date: str) -> None:
         _scan_task.status = "done"
         _scan_task.message = f"扫描完成，已评分 {sectors_scored} 个板块"
         _scan_task.trade_date = trade_date
+        if _scan_task.total > 0:
+            _scan_task.progress = _scan_task.total
         _scan_task.finished_at = datetime.utcnow().isoformat() + "Z"
 
 

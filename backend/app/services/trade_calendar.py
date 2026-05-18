@@ -31,24 +31,44 @@ def should_use_jq_bounds() -> bool:
     return settings.effective_data_source() == "jqdata"
 
 
+def normalize_to_trade_day(d: date) -> date:
+    """将日期对齐到不晚于 d 的最近一个交易日。"""
+    from datetime import timedelta
+
+    from app.adapters.factory import get_adapter
+
+    try:
+        adapter = get_adapter()
+        days = adapter.get_trade_days(d - timedelta(days=15), d)
+        if not days:
+            return d
+        if d in days:
+            return d
+        prior = [x for x in days if x <= d]
+        return prior[-1] if prior else days[0]
+    except Exception:
+        return d
+
+
 def resolve_scan_date(requested: Optional[date] = None) -> date:
     """
-    扫描/入库使用的交易日。
-    - 演示模式：可用今天或指定日
-    - 聚宽模式：默认权限内最后一个交易日，超出范围则截断
+    扫描/入库使用的交易日（市场交易日，非任务启动日期）。
+    - Tushare/演示：默认最近开市日；指定日会对齐到交易日
+    - 聚宽：默认权限内最后交易日，超出范围则截断
     """
     if not should_use_jq_bounds():
         if requested is not None:
-            return requested
+            return normalize_to_trade_day(requested)
         return _latest_open_trade_day()
 
     if requested is not None:
-        return clamp_to_jq_range(requested)
+        return normalize_to_trade_day(clamp_to_jq_range(requested))
 
     return latest_trade_day_in_range()
 
 
-def _latest_open_trade_day() -> date:
+@lru_cache(maxsize=1)
+def _latest_open_trade_day_cached() -> date:
     from datetime import timedelta
 
     from app.adapters.factory import get_adapter
@@ -62,6 +82,15 @@ def _latest_open_trade_day() -> date:
     except Exception:
         pass
     return today
+
+
+def _latest_open_trade_day() -> date:
+    return _latest_open_trade_day_cached()
+
+
+def clear_trade_day_ui_cache() -> None:
+    _jq_trade_days_cached.cache_clear()
+    _latest_open_trade_day_cached.cache_clear()
 
 
 @lru_cache(maxsize=1)
@@ -106,4 +135,109 @@ def clamp_backtest_range(start: date, end: date) -> tuple[date, date]:
 
 
 def clear_trade_days_cache() -> None:
-    _jq_trade_days_cached.cache_clear()
+    clear_trade_day_ui_cache()
+    _ui_default_scan_range_cached.cache_clear()
+
+
+def ui_default_scan_date() -> date:
+    """仪表盘默认交易日（带缓存，避免 /system/status 轮询打爆 Tushare）。"""
+    if should_use_jq_bounds():
+        return latest_trade_day_in_range()
+    return _latest_open_trade_day_cached()
+
+
+def resolve_scan_trade_days(
+    start: Optional[date] = None,
+    end: Optional[date] = None,
+    *,
+    default_count: int = 10,
+    quiet: bool = False,
+) -> list[date]:
+    """
+    解析扫描日期区间。
+
+    - 未传起止日：最近 default_count 个交易日（默认 10，非 15；结束日=最近开市日）
+    - 已传起止日：严格按日历区间查询开市日，**不**向前补满 default_count 天
+    - 返回结果按日期升序，便于多日扫描与日志按时间顺序输出
+    """
+    import logging
+    from datetime import timedelta
+
+    from app.adapters.factory import get_adapter
+
+    log = logging.getLogger(__name__)
+    adapter = get_adapter()
+
+    if start is None and end is None:
+        end_day = resolve_scan_date()
+        probe_start = end_day - timedelta(days=max(default_count * 3, 30))
+        days = adapter.get_trade_days(probe_start, end_day)
+        if not days:
+            return [end_day]
+        picked = sorted(
+            days[-default_count:] if len(days) > default_count else list(days)
+        )
+        if not quiet:
+            log.info(
+                "[流程] 扫描区间（默认最近%d个交易日）%s ~ %s 共%d日",
+                default_count,
+                picked[0],
+                picked[-1],
+                len(picked),
+            )
+        else:
+            log.debug(
+                "默认扫描区间（最近%d个交易日）%s ~ %s",
+                default_count,
+                picked[0],
+                picked[-1],
+            )
+        return picked
+
+    if end is None:
+        end = start
+    if start is None:
+        start = end
+    if start > end:
+        start, end = end, start
+
+    if should_use_jq_bounds():
+        start = clamp_to_jq_range(start)
+        end = clamp_to_jq_range(end)
+        if start > end:
+            raise ValueError(
+                f"扫描区间 {start} ~ {end} 超出聚宽权限 {jq_data_start()} ~ {jq_data_end()}"
+            )
+
+    # 用户明确选择的日历区间：直接查 trade_cal，勿用 resolve_scan_date 单点对齐
+    days = sorted(adapter.get_trade_days(start, end))
+    if not days:
+        raise ValueError(
+            f"区间 {start} ~ {end} 内没有 A 股交易日，请确认日期在行情权限内且为开市日"
+        )
+    if not quiet:
+        log.info(
+            "[流程] 扫描区间（用户选择 %s ~ %s）实际交易日 %s ~ %s 共 %d 日: %s",
+            start,
+            end,
+            days[0],
+            days[-1],
+            len(days),
+            [str(d) for d in days],
+        )
+    return days
+
+
+@lru_cache(maxsize=1)
+def _ui_default_scan_range_cached() -> tuple[date, date]:
+    """供 /system/status 填默认日期用（缓存，避免轮询反复打 trade_cal）。"""
+    days = resolve_scan_trade_days(default_count=10, quiet=True)
+    return days[0], days[-1]
+
+
+def ui_default_scan_range(default_count: int = 10) -> tuple[date, date]:
+    """仪表盘默认扫描起止日（最近 default_count 个交易日）。"""
+    if default_count == 10:
+        return _ui_default_scan_range_cached()
+    days = resolve_scan_trade_days(default_count=default_count, quiet=True)
+    return days[0], days[-1]

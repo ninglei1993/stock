@@ -23,6 +23,7 @@ class SectorScoreOut(BaseModel):
     relative_score: float
     position_hint: str
     leader_stock: Optional[str] = None
+    leader_stock_name: Optional[str] = None
     leader_streak: Optional[int] = None
     pct_change: Optional[float] = None
     is_filtered: bool = False
@@ -49,6 +50,9 @@ class TaskStatusOut(BaseModel):
     status: str
     message: str = ""
     trade_date: Optional[str] = None
+    scan_start_date: Optional[str] = None
+    scan_end_date: Optional[str] = None
+    trade_days: list[str] = Field(default_factory=list)
     progress: int = 0
     total: int = 0
     started_at: Optional[str] = None
@@ -81,6 +85,21 @@ class SetDataSourceIn(BaseModel):
     source: str
 
 
+class SetIngestSettingsIn(BaseModel):
+    max_stocks_per_concept: int = Field(ge=0, le=500, description="0=不限制，分析全部成分股")
+
+
+class ScanSectorsOut(BaseModel):
+    use_explicit_selection: bool = False
+    selected_codes: list[str] = Field(default_factory=list)
+    universe: list[ConceptOut] = Field(default_factory=list)
+
+
+class SetScanSectorsIn(BaseModel):
+    use_explicit_selection: bool = True
+    selected_codes: list[str] = Field(default_factory=list)
+
+
 class SystemStatusOut(BaseModel):
     adapter: str
     demo_mode: bool
@@ -92,9 +111,17 @@ class SystemStatusOut(BaseModel):
     tushare_configured: bool = False
     universe_total: int
     ingest_max_concepts: int
+    ingest_concept_filter: str = ""
+    scan_scope_label: str = ""
+    ingest_max_stocks_per_concept: int = 0
+    use_explicit_sector_selection: bool = False
+    selected_sector_count: int = 0
+    scan_volatile_storage: bool = False
     scan_task: TaskStatusOut
     jq_data_range: Optional[JqDataRangeOut] = None
     default_scan_date: Optional[date] = None
+    default_scan_start: Optional[date] = None
+    default_scan_end: Optional[date] = None
 
 
 class MarketEnvOut(BaseModel):
@@ -128,13 +155,20 @@ class DashboardOut(BaseModel):
     latest_scan: Optional[datetime] = None
 
 
+class StockPctDayOut(BaseModel):
+    trade_date: date
+    pct_change: float
+
+
 class StockInSector(BaseModel):
     stock_code: str
     stock_name: str = ""
     pct_change: float
+    pct_trade_date: Optional[date] = None
     is_limit_up: bool
     limit_up_streak: int
     money: float
+    pct_history: list[StockPctDayOut] = Field(default_factory=list)
 
 
 class ScoreDimensionOut(BaseModel):
@@ -155,6 +189,7 @@ class SectorDetailOut(BaseModel):
     sector_code: str
     sector_name: str
     trade_date: date
+    pct_display_days: list[date] = Field(default_factory=list)
     stage: str
     total_score: float
     scores: dict[str, float]

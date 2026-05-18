@@ -35,6 +35,7 @@ export interface SectorScore {
   relative_score: number;
   position_hint: string;
   leader_stock?: string;
+  leader_stock_name?: string;
   leader_streak?: number;
   pct_change?: number;
   is_filtered?: boolean;
@@ -60,6 +61,9 @@ export interface TaskStatus {
   status: "idle" | "running" | "done" | "failed";
   message: string;
   trade_date?: string | null;
+  scan_start_date?: string | null;
+  scan_end_date?: string | null;
+  trade_days?: string[];
   progress: number;
   total: number;
   started_at?: string | null;
@@ -88,6 +92,17 @@ export interface DataSourcesResponse {
   options: DataSourceOption[];
 }
 
+export interface ConceptItem {
+  sector_code: string;
+  sector_name: string;
+}
+
+export interface ScanSectorsResponse {
+  use_explicit_selection: boolean;
+  selected_codes: string[];
+  universe: ConceptItem[];
+}
+
 export interface SystemStatus {
   adapter: string;
   demo_mode: boolean;
@@ -99,9 +114,17 @@ export interface SystemStatus {
   tushare_configured?: boolean;
   universe_total: number;
   ingest_max_concepts: number;
+  ingest_concept_filter?: string;
+  scan_scope_label?: string;
+  ingest_max_stocks_per_concept?: number;
+  use_explicit_sector_selection?: boolean;
+  selected_sector_count?: number;
+  scan_volatile_storage?: boolean;
   scan_task: TaskStatus;
   jq_data_range?: JqDataRange | null;
   default_scan_date?: string | null;
+  default_scan_start?: string | null;
+  default_scan_end?: string | null;
 }
 
 export interface Dashboard {
@@ -128,10 +151,16 @@ export interface ScoreDimension {
   description: string;
 }
 
+export interface StockPctDay {
+  trade_date: string;
+  pct_change: number;
+}
+
 export interface SectorDetail {
   sector_code: string;
   sector_name: string;
   trade_date: string;
+  pct_display_days?: string[];
   stage: string;
   total_score: number;
   scores: Record<string, number>;
@@ -151,9 +180,11 @@ export interface SectorDetail {
     stock_code: string;
     stock_name?: string;
     pct_change: number;
+    pct_trade_date?: string;
     is_limit_up: boolean;
     limit_up_streak: number;
     money: number;
+    pct_history?: StockPctDay[];
   }>;
   history: Array<{ trade_date: string; total_score: number; stage: string }>;
   flow_history?: Array<{
@@ -217,8 +248,34 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ source }),
     }),
+  getScanSectors: () => fetchJson<ScanSectorsResponse>("/system/scan-sectors"),
+  setScanSectors: (body: {
+    use_explicit_selection: boolean;
+    selected_codes: string[];
+  }) =>
+    fetchJson<{ message: string; selected_count: number }>("/system/scan-sectors", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  listConcepts: () => fetchJson<ConceptItem[]>("/concepts"),
+  setIngestSettings: (maxStocksPerConcept: number) =>
+    fetchJson<{ message: string; ingest_max_stocks_per_concept: number }>(
+      "/system/ingest-settings",
+      {
+        method: "POST",
+        body: JSON.stringify({ max_stocks_per_concept: maxStocksPerConcept }),
+      }
+    ),
   scanTaskStatus: () => fetchJson<TaskStatus>("/tasks/scan"),
-  dashboard: () => fetchJson<Dashboard>("/dashboard"),
+  dashboard: (tradeDate?: string) => {
+    const q = tradeDate ? `?trade_date=${tradeDate}` : "";
+    return fetchJson<Dashboard>(`/dashboard${q}`);
+  },
+  clearData: () =>
+    fetchJson<{ message: string; deleted?: Record<string, number> }>(
+      "/system/clear-data",
+      { method: "POST" }
+    ),
   listSectors: (tradeDate?: string, scoredOnly = true, includeAll = false) => {
     const params = new URLSearchParams();
     if (tradeDate) params.set("trade_date", tradeDate);
@@ -227,14 +284,21 @@ export const api = {
     const q = params.toString();
     return fetchJson<SectorList>(`/sectors${q ? `?${q}` : ""}`);
   },
-  scanLatest: (tradeDate?: string) => {
-    const q = tradeDate ? `?trade_date=${tradeDate}` : "";
+  scanLatest: (opts?: { startDate?: string; endDate?: string; tradeDate?: string }) => {
+    const params = new URLSearchParams();
+    if (opts?.startDate) params.set("start_date", opts.startDate);
+    if (opts?.endDate) params.set("end_date", opts.endDate);
+    if (opts?.tradeDate) params.set("trade_date", opts.tradeDate);
+    const q = params.toString();
     return fetchJson<{
       trade_date: string;
+      start_date?: string;
+      end_date?: string;
+      trade_days?: string[];
       status?: string;
       message?: string;
       jq_data_range?: string;
-    }>(`/scan/latest${q}`, { method: "POST" });
+    }>(`/scan/latest${q ? `?${q}` : ""}`, { method: "POST" });
   },
   alerts: (tradeDate?: string) =>
     fetchJson<Alert[]>(`/alerts${tradeDate ? `?trade_date=${tradeDate}` : ""}`),

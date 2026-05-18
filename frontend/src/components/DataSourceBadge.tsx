@@ -5,9 +5,18 @@ export default function DataSourceBadge({ compact = false }: { compact?: boolean
   const [status, setStatus] = useState<SystemStatus | null>(null);
 
   useEffect(() => {
-    const load = () => api.systemStatus().then(setStatus).catch(() => {});
+    const load = () =>
+      api.systemStatus().then((s) => {
+        if (import.meta.env.DEV) {
+          console.log("[ThemeRadar] GET /api/system/status", s);
+          if (s.scan_task?.status === "running") {
+            console.log("[ThemeRadar] scan_task", s.scan_task);
+          }
+        }
+        setStatus(s);
+      }).catch(() => {});
     load();
-    const t = setInterval(load, 15000);
+    const t = setInterval(load, 60000);
     const onDs = () => load();
     window.addEventListener("themeradar:data-source-changed", onDs);
     return () => {
@@ -20,6 +29,13 @@ export default function DataSourceBadge({ compact = false }: { compact?: boolean
 
   const live = status.is_live_data;
   const cls = live ? "ds-badge ds-live" : "ds-badge ds-demo";
+  const scopeLabel =
+    status.scan_scope_label ||
+    (status.use_explicit_sector_selection && status.selected_sector_count
+      ? `已勾选 ${status.selected_sector_count} 个板块`
+      : status.ingest_concept_filter
+      ? `关键词「${status.ingest_concept_filter}」`
+      : "");
 
   if (compact) {
     return (
@@ -41,6 +57,8 @@ export default function DataSourceBadge({ compact = false }: { compact?: boolean
           {status.jq_data_range
             ? ` · 数据权限 ${status.jq_data_range.start} ~ ${status.jq_data_range.end}`
             : ""}
+          {scopeLabel ? ` · 扫描范围：${scopeLabel}` : ""}
+          {status.scan_volatile_storage ? " · 扫描仅内存不写库" : ""}
         </span>
       </div>
       {live && status.jq_data_range && (

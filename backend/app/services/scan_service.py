@@ -3,10 +3,22 @@ from datetime import date, timedelta
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.tables import Alert, SectorDaily, SectorFlowDaily, SectorScoreDaily, ThemeLeaderDaily
+from app.config import settings
+from app.models.tables import Alert, SectorScoreDaily
 from app.services.alert_service import AlertService
+from app.services.volatile_merge import (
+    get_market_env_merged,
+    merge_leaders,
+    merge_sector_daily,
+    merge_sector_flow,
+)
 from app.services.risk import RiskModule
 from app.services.theme_engine import ThemeEngine
+from app.utils.timing_log import log_elapsed
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ScanService:
@@ -17,35 +29,27 @@ class ScanService:
         self.alerts = AlertService()
 
     async def run_scan(self, trade_date: date) -> list[SectorScoreDaily]:
+        logger.info(
+            "[流程] 五维评分：从数据库/内存读取各板块多日行情与资金流，不再调用 Tushare 全市场接口"
+        )
+        logger.info("[数据] ScanService.run_scan 开始 trade_date=%s", trade_date)
+        with log_elapsed("ScanService.run_scan 读库+评分+预警", logger_obj=logger):
+            return await self._run_scan_inner(trade_date)
+
+    async def _run_scan_inner(self, trade_date: date) -> list[SectorScoreDaily]:
         lookback_start = trade_date - timedelta(days=15)
-        daily_all = (
-            await self.session.execute(
-                select(SectorDaily).where(
-                    SectorDaily.trade_date >= lookback_start,
-                    SectorDaily.trade_date <= trade_date,
-                )
-            )
-        ).scalars().all()
+        daily_all = await merge_sector_daily(
+            self.session, lookback_start, trade_date
+        )
 
-        flow_all = (
-            await self.session.execute(
-                select(SectorFlowDaily).where(
-                    SectorFlowDaily.trade_date >= lookback_start,
-                    SectorFlowDaily.trade_date <= trade_date,
-                )
-            )
-        ).scalars().all()
+        flow_all = await merge_sector_flow(
+            self.session, lookback_start, trade_date
+        )
 
-        leaders = (
-            await self.session.execute(
-                select(ThemeLeaderDaily).where(ThemeLeaderDaily.trade_date == trade_date)
-            )
-        ).scalars().all()
+        leaders = await merge_leaders(self.session, trade_date)
         leader_map = {l.sector_code: l for l in leaders}
 
-        from app.models.tables import MarketEnvDaily
-
-        env_row = await self.session.get(MarketEnvDaily, trade_date)
+        env_row = await get_market_env_merged(self.session, trade_date)
         index_pct = env_row.index_pct if env_row else 0.0
 
         sectors_today = {r.sector_code for r in daily_all if r.trade_date == trade_date}
@@ -109,10 +113,15 @@ class ScanService:
                 sr.position_hint = self.risk.adjust_position_hint(sr.position_hint, self.risk.env_from_model(env_row))
             results.append(sr)
 
-        ranked = self.engine.rank_sectors(results)
-        await self.session.execute(
-            delete(SectorScoreDaily).where(SectorScoreDaily.trade_date == trade_date)
-        )
+        from app.services.ingest_settings_store import read_scan_sectors_selection
+
+        use_explicit, _ = read_scan_sectors_selection()
+        ranked = self.engine.rank_sectors(results, keep_all=use_explicit)
+
+        if not settings.scan_volatile_storage:
+            await self.session.execute(
+                delete(SectorScoreDaily).where(SectorScoreDaily.trade_date == trade_date)
+            )
 
         today_map = {r.sector_code: r for r in ranked}
         saved: list[SectorScoreDaily] = []
@@ -133,21 +142,31 @@ class ScanService:
                 filter_reason=sr.filter_reason,
                 position_hint=sr.position_hint,
             )
-            self.session.add(row)
             saved.append(row)
+            if not settings.scan_volatile_storage:
+                self.session.add(row)
 
         env_bad = False
         if env_row:
-            prev_env = await self.session.get(MarketEnvDaily, yesterday)
+            prev_env = await get_market_env_merged(self.session, yesterday)
             if prev_env and env_row.env_score < 40 and env_row.env_score < prev_env.env_score - 20:
                 env_bad = True
 
         alert_items = self.alerts.diff_alerts(
             trade_date, today_map, prev_score_map, env_bad=env_bad
         )
-        await self.session.execute(delete(Alert).where(Alert.trade_date == trade_date))
-        for a in alert_items:
-            self.session.add(Alert(**a))
 
-        await self.session.flush()
+        if not settings.scan_volatile_storage:
+            await self.session.execute(delete(Alert).where(Alert.trade_date == trade_date))
+            for a in alert_items:
+                self.session.add(Alert(**a))
+            await self.session.flush()
+
+        logger.info(
+            "[数据] ScanService.run_scan 完成 trade_date=%s sectors_scored=%d alerts=%d volatile=%s",
+            trade_date,
+            len(saved),
+            len(alert_items),
+            settings.scan_volatile_storage,
+        )
         return saved

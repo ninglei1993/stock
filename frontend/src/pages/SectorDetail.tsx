@@ -1,22 +1,25 @@
 import { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useSearchParams } from "react-router-dom";
 import { api, SectorDetail as SectorDetailType } from "../api";
 import { STAGE_LABEL, POSITION_LABEL, SCORE_DIM_LABEL, pctClass, formatPct } from "../utils";
 
 export default function SectorDetail() {
   const { code } = useParams<{ code: string }>();
+  const [searchParams] = useSearchParams();
+  const tradeDate = searchParams.get("trade_date") || undefined;
   const [detail, setDetail] = useState<SectorDetailType | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
     if (!code) return;
+    setLoading(true);
     api
-      .sector(code)
+      .sector(code, tradeDate)
       .then(setDetail)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [code]);
+  }, [code, tradeDate]);
 
   if (loading) return <div className="loading">加载中…</div>;
   if (error) return <div className="error">{error}</div>;
@@ -207,33 +210,64 @@ export default function SectorDetail() {
       )}
 
       <div className="card-glass">
-        <h3 style={{ fontSize: "0.95rem", marginBottom: "0.75rem" }}>
-          成分股（按涨跌幅排序）
+        <h3 style={{ fontSize: "0.95rem", marginBottom: "0.35rem" }}>
+          成分股（按 {detail.trade_date} 涨跌幅排序）
         </h3>
-        <table>
-          <thead>
-            <tr>
-              <th>代码</th>
-              <th>名称</th>
-              <th>涨跌幅</th>
-              <th>涨停</th>
-              <th>连板</th>
-              <th>成交额</th>
-            </tr>
-          </thead>
-          <tbody>
-            {detail.stocks.map((s) => (
-              <tr key={s.stock_code}>
-                <td style={{ fontFamily: "JetBrains Mono" }}>{s.stock_code}</td>
-                <td>{s.stock_name || "—"}</td>
-                <td className={pctClass(s.pct_change)}>{formatPct(s.pct_change)}</td>
-                <td>{s.is_limit_up ? <span className="text-up">涨停</span> : "—"}</td>
-                <td>{s.limit_up_streak > 0 ? `${s.limit_up_streak}板` : "—"}</td>
-                <td>{(s.money / 1e8).toFixed(2)} 亿</td>
+        {(detail.pct_display_days?.length ?? 0) > 1 && (
+          <p style={{ fontSize: "0.78rem", color: "var(--muted)", marginBottom: "0.75rem" }}>
+            涨跌幅列为扫描区间内最近 {detail.pct_display_days!.length} 个交易日（
+            {detail.pct_display_days![0]} ~{" "}
+            {detail.pct_display_days![detail.pct_display_days!.length - 1]}）
+          </p>
+        )}
+        <div style={{ overflowX: "auto" }}>
+          <table>
+            <thead>
+              <tr>
+                <th>代码</th>
+                <th>名称</th>
+                {(detail.pct_display_days?.length
+                  ? detail.pct_display_days
+                  : [detail.trade_date]
+                ).map((d) => (
+                  <th key={d} title={`${d} 涨跌幅`}>
+                    {d.slice(5)}
+                  </th>
+                ))}
+                <th>涨停 ({detail.trade_date.slice(5)})</th>
+                <th>连板</th>
+                <th>成交额 ({detail.trade_date.slice(5)})</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {detail.stocks.map((s) => {
+                const histMap = new Map(
+                  (s.pct_history ?? []).map((h) => [h.trade_date, h.pct_change])
+                );
+                const cols = detail.pct_display_days?.length
+                  ? detail.pct_display_days
+                  : [detail.trade_date];
+                return (
+                  <tr key={s.stock_code}>
+                    <td style={{ fontFamily: "JetBrains Mono" }}>{s.stock_code}</td>
+                    <td>{s.stock_name || "—"}</td>
+                    {cols.map((d) => {
+                      const pct = histMap.get(d);
+                      return (
+                        <td key={d} className={pct != null ? pctClass(pct) : ""}>
+                          {pct != null ? formatPct(pct) : "—"}
+                        </td>
+                      );
+                    })}
+                    <td>{s.is_limit_up ? <span className="text-up">涨停</span> : "—"}</td>
+                    <td>{s.limit_up_streak > 0 ? `${s.limit_up_streak}板` : "—"}</td>
+                    <td>{(s.money / 1e8).toFixed(2)} 亿</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

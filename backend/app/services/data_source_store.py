@@ -9,8 +9,8 @@ from app.config import _PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
 
-DataSourceId = Literal["auto", "jqdata", "tushare", "demo"]
-VALID_SOURCES = frozenset({"auto", "jqdata", "tushare", "demo"})
+DataSourceId = Literal["auto", "jqdata", "tushare"]
+VALID_SOURCES = frozenset({"auto", "jqdata", "tushare"})
 
 _OVERRIDE_FILE = _PROJECT_ROOT / "data_source.override.json"
 
@@ -21,6 +21,8 @@ def read_override() -> Optional[DataSourceId]:
     try:
         raw = json.loads(_OVERRIDE_FILE.read_text(encoding="utf-8"))
         src = str(raw.get("source", "")).lower().strip()
+        if src == "demo":
+            return None
         if src in VALID_SOURCES:
             return src  # type: ignore[return-value]
     except (OSError, json.JSONDecodeError, TypeError) as exc:

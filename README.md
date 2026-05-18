@@ -13,13 +13,15 @@ A 股主线预警 Web 系统：盘面先热，消息后吹；资金先进，散�
 
 交易策略说明见项目 Skill：`.cursor/skills/themeradar-trading/SKILL.md`（含买卖规则、已知局限与改进方向）。
 
+数据获取与加工流程（含流程图、耗时日志说明）见 [docs/data-pipeline.md](docs/data-pipeline.md)。
+
 ## 快速开始
 
 ### Docker（推荐）
 
 ```bash
 cp .env.example .env
-# 可选：配置 JQDATA_USERNAME / JQDATA_PASSWORD 或 TUSHARE_TOKEN，并设置 DEMO_MODE=false
+# 可选：配置 JQDATA_USERNAME / JQDATA_PASSWORD 或 TUSHARE_TOKEN + TUSHARE_API_URL，并设置 DEMO_MODE=false
 # 仪表盘首页可切换数据源（聚宽 / Tushare / 演示），无需改代码
 # INGEST_MAX_CONCEPTS：单次扫描入库的概念数（默认 50）。0=全部约396个，极易耗尽聚宽「日100万条」配额
 # JQDATA_DATA_START / JQDATA_DATA_END：聚宽账号可查询的数据区间（默认 2025-02-06 ~ 2026-02-13）

@@ -1,12 +1,11 @@
 import { useCallback, useState } from "react";
-import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, NavLink, Route, Routes } from "react-router-dom";
 import Dashboard from "./pages/Dashboard";
 import Alerts from "./pages/Alerts";
 import SectorDetail from "./pages/SectorDetail";
 import Review from "./pages/Review";
 import Backtest from "./pages/Backtest";
 import Guide from "./pages/Guide";
-import Sectors from "./pages/Sectors";
 import DataSourceBadge from "./components/DataSourceBadge";
 import TaskStatusBar from "./components/TaskStatusBar";
 
@@ -26,9 +25,6 @@ export default function App() {
           <nav>
             <NavLink to="/" className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`} end>
               仪表盘
-            </NavLink>
-            <NavLink to="/sectors-list" className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
-              板块列表
             </NavLink>
             <NavLink to="/alerts" className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
               预警中心
@@ -51,9 +47,9 @@ export default function App() {
           <TaskStatusBar onDone={onScanDone} />
           <Routes>
             <Route path="/" element={<Dashboard key={refreshKey} />} />
+            <Route path="/sectors-list" element={<Navigate to="/" replace />} />
             <Route path="/alerts" element={<Alerts />} />
-            <Route path="/sectors-list" element={<Sectors key={refreshKey} />} />
-            <Route path="/sectors/:code" element={<SectorDetail />} />
+            <Route path="/sectors/:code" element={<SectorDetail key={refreshKey} />} />
             <Route path="/review" element={<Review />} />
             <Route path="/backtest" element={<Backtest />} />
             <Route path="/backtest/:id" element={<Backtest />} />

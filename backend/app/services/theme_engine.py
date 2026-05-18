@@ -163,8 +163,13 @@ class ThemeEngine:
         }
         return hints.get(stage, "observe")
 
-    def rank_sectors(self, scores: list[ScoreResult]) -> list[ScoreResult]:
-        active = [s for s in scores if not s.is_filtered or s.total_score >= 50]
+    def rank_sectors(
+        self, scores: list[ScoreResult], *, keep_all: bool = False
+    ) -> list[ScoreResult]:
+        if keep_all:
+            active = list(scores)
+        else:
+            active = [s for s in scores if not s.is_filtered or s.total_score >= 50]
         active.sort(key=lambda x: x.total_score, reverse=True)
         return active
 

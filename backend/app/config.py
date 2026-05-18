@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     demo_mode: bool = True
     # 0=全部概念（耗聚宽日配额极大）；免费账号建议 30~80
     ingest_max_concepts: int = 50
+    # 仅入库名称包含该关键词的概念（如 CPO）；留空表示按 ingest_max_concepts 取列表前 N 个
+    ingest_concept_filter: str = ""
+    # 每个概念板块最多分析的成分股数；0=全部（CPO 等大盘概念较慢）
+    ingest_max_stocks_per_concept: int = 0
+    ingest_price_lookback_days: int = 8
+    ingest_flow_lookback_days: int = 3
     scan_hour: int = 15
     scan_minute: int = 10
     jqdata_rate_limit: float = 25.0
@@ -40,7 +46,11 @@ class Settings(BaseSettings):
     # 数据源：auto | jqdata | tushare | demo（首页可覆盖 data_source.override.json）
     data_source: str = "auto"
     tushare_token: str = ""
+    # 第三方 Tushare 代理地址（留空则用官方 api.waditu.com）
+    tushare_api_url: str = "http://teajoin.com"
     tushare_rate_limit: float = 170.0
+    # True=收盘扫描不落库 PostgreSQL（仅内存快照供仪表盘）；历史回看仍读库。重启/多 worker 不适用
+    scan_volatile_storage: bool = False
 
     def jq_configured(self) -> bool:
         return (
@@ -60,13 +70,8 @@ class Settings(BaseSettings):
         return (self.data_source or "auto").lower().strip()
 
     def use_demo_data(self) -> bool:
-        ds = self.effective_data_source()
-        if ds == "demo":
-            return True
-        if ds in ("jqdata", "tushare"):
-            return False
-        # auto：未配置任何实盘源时用演示
-        return self.demo_mode and not self.jq_configured() and not self.tushare_configured()
+        """演示数据已下线；未配置实盘源时由 get_adapter 报错。"""
+        return False
 
     def resolved_live_provider(self) -> str | None:
         """返回 jqdata / tushare，或 None（走演示）。"""
