@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, Dashboard as DashboardData, TaskStatus } from "../api";
-import DataSourceBadge from "../components/DataSourceBadge";
-import DataSourceSelector from "../components/DataSourceSelector";
 import SectorScanPicker from "../components/SectorScanPicker";
 import { pctClass, formatPct, STAGE_LABEL, ENV_CONCLUSION_LABEL } from "../utils";
+
+function formatYi(v: number): string {
+  if (!Number.isFinite(v)) return "0.0";
+  return v.toLocaleString("zh-CN", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+}
 
 export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -46,26 +49,16 @@ export default function Dashboard() {
       if (s.ingest_max_stocks_per_concept != null) {
         setMaxStocksPerConcept(s.ingest_max_stocks_per_concept);
       }
-      if (s.jq_data_range) {
-        setJqRangeLabel(s.jq_data_range.label);
-        setJqMin(s.jq_data_range.start);
-        setJqMax(s.jq_data_range.end);
-      } else {
-        setJqRangeLabel("");
-        setJqMin("");
-        setJqMax("");
-      }
+      // 仅保留 Tushare 数据源，无需展示聚宽权限区间
+      setJqRangeLabel("");
+      setJqMin("");
+      setJqMax("");
     });
   };
 
   useEffect(() => {
     load();
     refreshScanMeta(true);
-    const onDs = () => {
-      refreshScanMeta(true);
-      load();
-    };
-    window.addEventListener("themeradar:data-source-changed", onDs);
     const onTask = (e: Event) => {
       const t = (e as CustomEvent<TaskStatus>).detail;
       if (t) setScanTask(t);
@@ -81,7 +74,6 @@ export default function Dashboard() {
     window.addEventListener("themeradar:scan-complete", onComplete);
     api.scanTaskStatus().then((t) => setScanTask(t.status === "idle" ? null : t)).catch(() => {});
     return () => {
-      window.removeEventListener("themeradar:data-source-changed", onDs);
       window.removeEventListener("themeradar:scan-task", onTask);
       window.removeEventListener("themeradar:scan-complete", onComplete);
     };
@@ -193,7 +185,6 @@ export default function Dashboard() {
       setViewDate("");
       refreshScanMeta(false);
       load();
-      window.dispatchEvent(new CustomEvent("themeradar:data-source-changed"));
     } catch (e) {
       setError(e instanceof Error ? e.message : "清空失败");
     } finally {
@@ -206,13 +197,94 @@ export default function Dashboard() {
   }
 
   const env = data?.market_env;
+  const marketOverview = data?.market_overview;
   const sectors = data?.top_sectors ?? [];
   const displayDate = data?.trade_date || viewDate;
+  const riseFallTotal = (marketOverview?.up_count || 0) + (marketOverview?.down_count || 0) + (marketOverview?.flat_count || 0);
+  const risePct = riseFallTotal > 0 ? ((marketOverview?.up_count || 0) / riseFallTotal) * 100 : 0;
+  const flatPct = riseFallTotal > 0 ? ((marketOverview?.flat_count || 0) / riseFallTotal) * 100 : 0;
+  const fallPct = riseFallTotal > 0 ? ((marketOverview?.down_count || 0) / riseFallTotal) * 100 : 0;
 
   return (
     <>
-      <DataSourceSelector />
-      <DataSourceBadge />
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+        <h2 className="page-title" style={{ marginBottom: 0 }}>
+          仪表盘
+          {displayDate && (
+            <span style={{ fontSize: "0.9rem", color: "var(--muted)", fontWeight: 400, marginLeft: "0.75rem" }}>
+              {displayDate}
+            </span>
+          )}
+        </h2>
+        <button className="btn btn-primary" onClick={runScan} disabled={scanRunning}>
+          {scanRunning ? "后台扫描中…" : "执行收盘扫描"}
+        </button>
+      </div>
+
+      {error && <p className="error" style={{ marginBottom: "1rem" }}>{error}</p>}
+
+      {(env || marketOverview) && (
+        <div className="card-glass" style={{ marginBottom: "1rem", padding: "1rem 1.1rem" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.7rem" }}>
+            <h3 style={{ margin: 0, fontSize: "1rem" }}>大盘分析</h3>
+            {env && (
+              <span className={`env-conclusion ${env.conclusion}`}>
+                {ENV_CONCLUSION_LABEL[env.conclusion] || env.conclusion}
+              </span>
+            )}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: "0.7rem", marginBottom: "0.85rem" }}>
+            <div style={{ border: "1px solid var(--line)", borderRadius: "10px", padding: "0.65rem 0.75rem" }}>
+              <div style={{ color: "var(--muted)", fontSize: "0.8rem" }}>全市场成交额（板块聚合）</div>
+              <div style={{ fontSize: "1.65rem", fontWeight: 700, lineHeight: 1.2 }}>
+                {formatYi(marketOverview?.total_turnover_yi || 0)}
+                <span style={{ fontSize: "0.95rem", color: "var(--muted)", marginLeft: "0.25rem" }}>亿</span>
+              </div>
+            </div>
+            <div style={{ border: "1px solid var(--line)", borderRadius: "10px", padding: "0.65rem 0.75rem" }}>
+              <div style={{ color: "var(--muted)", fontSize: "0.8rem" }}>上涨</div>
+              <div className="text-up" style={{ fontSize: "1.2rem", fontWeight: 700 }}>{marketOverview?.up_count ?? 0}</div>
+            </div>
+            <div style={{ border: "1px solid var(--line)", borderRadius: "10px", padding: "0.65rem 0.75rem" }}>
+              <div style={{ color: "var(--muted)", fontSize: "0.8rem" }}>平盘</div>
+              <div style={{ fontSize: "1.2rem", fontWeight: 700 }}>{marketOverview?.flat_count ?? 0}</div>
+            </div>
+            <div style={{ border: "1px solid var(--line)", borderRadius: "10px", padding: "0.65rem 0.75rem" }}>
+              <div style={{ color: "var(--muted)", fontSize: "0.8rem" }}>下跌</div>
+              <div className="text-down" style={{ fontSize: "1.2rem", fontWeight: 700 }}>{marketOverview?.down_count ?? 0}</div>
+            </div>
+          </div>
+          <div style={{ borderTop: "1px solid var(--line)", paddingTop: "0.75rem" }}>
+            <div style={{ color: "var(--muted)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>涨跌统计</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.6rem", marginBottom: "0.5rem" }}>
+              <div>
+                <div style={{ fontSize: "0.76rem", color: "var(--muted)" }}>上涨占比</div>
+                <div className="text-up" style={{ fontWeight: 700 }}>{risePct.toFixed(1)}%</div>
+              </div>
+              <div>
+                <div style={{ fontSize: "0.76rem", color: "var(--muted)" }}>平盘占比</div>
+                <div style={{ fontWeight: 700 }}>{flatPct.toFixed(1)}%</div>
+              </div>
+              <div>
+                <div style={{ fontSize: "0.76rem", color: "var(--muted)" }}>下跌占比</div>
+                <div className="text-down" style={{ fontWeight: 700 }}>{fallPct.toFixed(1)}%</div>
+              </div>
+            </div>
+            <div style={{ width: "100%", height: "10px", display: "flex", borderRadius: "999px", overflow: "hidden", background: "var(--line)" }}>
+              <div style={{ width: `${risePct}%`, background: "var(--up)" }} />
+              <div style={{ width: `${flatPct}%`, background: "var(--muted)" }} />
+              <div style={{ width: `${fallPct}%`, background: "var(--down)" }} />
+            </div>
+            {env && (
+              <div style={{ marginTop: "0.55rem", fontSize: "0.78rem", color: "var(--muted)" }}>
+                涨停 {env.limit_up_count} 家 · 涨跌比 {(env.up_down_ratio * 100).toFixed(0)}% · 沪深300{" "}
+                <span className={pctClass(env.index_pct)}>{formatPct(env.index_pct)}</span> · 环境分{" "}
+                <span style={{ fontFamily: "JetBrains Mono" }}>{env.env_score.toFixed(0)}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="card-glass" style={{ marginBottom: "1rem", padding: "0.85rem 1.1rem" }}>
         <div className="form-row" style={{ alignItems: "flex-end", marginBottom: 0, flexWrap: "wrap", gap: "1rem" }}>
@@ -255,7 +327,7 @@ export default function Dashboard() {
           </div>
           {jqRangeLabel && (
             <span style={{ fontSize: "0.8rem", color: "var(--muted)", paddingBottom: "0.5rem" }}>
-              聚宽权限：{jqRangeLabel}
+              {jqRangeLabel}
             </span>
           )}
         </div>
@@ -279,22 +351,6 @@ export default function Dashboard() {
           </button>
         </div>
       </div>
-
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-        <h2 className="page-title" style={{ marginBottom: 0 }}>
-          仪表盘
-          {displayDate && (
-            <span style={{ fontSize: "0.9rem", color: "var(--muted)", fontWeight: 400, marginLeft: "0.75rem" }}>
-              {displayDate}
-            </span>
-          )}
-        </h2>
-        <button className="btn btn-primary" onClick={runScan} disabled={scanRunning}>
-          {scanRunning ? "后台扫描中…" : "执行收盘扫描"}
-        </button>
-      </div>
-
-      {error && <p className="error" style={{ marginBottom: "1rem" }}>{error}</p>}
 
       {scanRunning && scanTask && (
         <div
@@ -330,32 +386,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {env && (
-        <div className="card-glass env-bar">
-          <div>
-            <div style={{ fontSize: "0.8rem", color: "var(--muted)" }}>大盘环境</div>
-            <div className="env-score">{env.env_score.toFixed(0)}</div>
-          </div>
-          <span className={`env-conclusion ${env.conclusion}`}>
-            {ENV_CONCLUSION_LABEL[env.conclusion] || env.conclusion}
-          </span>
-          <div>
-            <div style={{ color: "var(--muted)", fontSize: "0.85rem" }}>涨停家数</div>
-            <div style={{ fontFamily: "JetBrains Mono" }}>{env.limit_up_count}</div>
-          </div>
-          <div>
-            <div style={{ color: "var(--muted)", fontSize: "0.85rem" }}>涨跌比</div>
-            <div style={{ fontFamily: "JetBrains Mono" }}>{(env.up_down_ratio * 100).toFixed(0)}%</div>
-          </div>
-          <div>
-            <div style={{ color: "var(--muted)", fontSize: "0.85rem" }}>沪深300</div>
-            <div className={pctClass(env.index_pct)} style={{ fontFamily: "JetBrains Mono" }}>
-              {formatPct(env.index_pct)}
-            </div>
-          </div>
-        </div>
-      )}
-
       <h3 style={{ marginBottom: "1rem", fontSize: "1rem", color: "var(--muted)" }}>
         本次扫描板块{sectors.length > 0 ? `（${sectors.length}）` : ""}
       </h3>
@@ -383,24 +413,28 @@ export default function Dashboard() {
                     </div>
                     <span className={`stage-badge stage-${s.stage}`}>{STAGE_LABEL[s.stage] || s.stage}</span>
                   </div>
-                  <div className="score-big" style={{ margin: "0.75rem 0" }}>
-                    {s.total_score.toFixed(0)}
-                    <span style={{ fontSize: "0.85rem", color: "var(--muted)", fontWeight: 400 }}> 分</span>
+                  <div style={{ margin: "0.65rem 0 0.25rem", display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                    <span className={`hint-pill ${s.is_main_line ? "text-up" : ""}`}>
+                      {s.is_main_line ? "主线通过" : "未通过主线"}
+                    </span>
+                    {s.main_line_tier && s.main_line_tier !== "rotation" && (
+                      <span className="hint-pill">{s.main_line_tier === "top" ? "顶级主线" : "次级主线"}</span>
+                    )}
                   </div>
-                  <div
-                    style={{
-                      fontSize: "0.8rem",
-                      color: "var(--muted)",
-                      display: "grid",
-                      gridTemplateColumns: "1fr 1fr",
-                      gap: "0.25rem",
-                    }}
-                  >
-                    <span>持续 {s.persistence_score.toFixed(0)}</span>
-                    <span>资金 {s.capital_score.toFixed(0)}</span>
-                    <span>广度 {s.breadth_score.toFixed(0)}</span>
-                    <span>龙头 {s.leader_score.toFixed(0)}</span>
-                  </div>
+                  {!!(s.rules?.length) && (
+                    <div style={{ fontSize: "0.78rem", color: "var(--muted)", lineHeight: 1.5 }}>
+                      {(() => {
+                        const passed = (s.rules || []).filter((r) => (r as { passed?: boolean }).passed).map((r) => (r as { label?: string }).label).filter(Boolean);
+                        const failed = (s.rules || []).filter((r) => !(r as { passed?: boolean }).passed).map((r) => (r as { label?: string }).label).filter(Boolean);
+                        return (
+                          <>
+                            {passed.length > 0 && <div>满足：{passed.slice(0, 3).join("、")}{passed.length > 3 ? "…" : ""}</div>}
+                            {failed.length > 0 && <div>不满足：{failed.slice(0, 3).join("、")}{failed.length > 3 ? "…" : ""}</div>}
+                          </>
+                        );
+                      })()}
+                    </div>
+                  )}
                   {leaderLabel && (
                     <div style={{ marginTop: "0.5rem", fontSize: "0.75rem" }}>
                       龙头 {leaderLabel}
@@ -413,6 +447,7 @@ export default function Dashboard() {
           })}
         </div>
       )}
+
     </>
   );
 }

@@ -15,6 +15,7 @@ class SectorAggregator:
 
         pcts = [q.pct_change for q in quotes]
         avg_pct = sum(pcts) / len(pcts)
+        total_volume = sum(float(q.volume or 0.0) for q in quotes)
         total_money = sum(q.money for q in quotes)
         limit_up = sum(1 for q in quotes if q.is_limit_up)
         big_yang = sum(1 for q in quotes if q.is_big_yang)
@@ -30,6 +31,7 @@ class SectorAggregator:
             sector_name=sector_name,
             pct_change=round(avg_pct, 2),
             close=100 + avg_pct,
+            volume=total_volume,
             money=total_money,
             limit_up_count=limit_up,
             big_yang_count=big_yang,

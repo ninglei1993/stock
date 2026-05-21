@@ -28,6 +28,13 @@ class SectorScoreOut(BaseModel):
     pct_change: Optional[float] = None
     is_filtered: bool = False
     filter_reason: Optional[str] = None
+    is_main_line: bool = False
+    main_line_tier: str = "rotation"
+    confirm_state: str = "pending"
+    exit_state: str = "normal"
+    source_tag: str = "auto"
+    rules: list[dict[str, Any]] = Field(default_factory=list)
+    rule_fail_reasons: list[str] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -36,12 +43,10 @@ class SectorListOut(BaseModel):
     trade_date: Optional[date]
     universe_total: int
     sectors_scored: int
-    demo_mode: bool
     is_live_data: bool = False
     data_source: str
     data_source_label: str = ""
     data_source_short: str = ""
-    jq_configured: bool
     sectors: list[SectorScoreOut]
 
 
@@ -60,31 +65,6 @@ class TaskStatusOut(BaseModel):
     error: Optional[str] = None
 
 
-class JqDataRangeOut(BaseModel):
-    start: date
-    end: date
-    latest_trade_day: date
-    label: str
-
-
-class DataSourceOptionOut(BaseModel):
-    id: str
-    label: str
-    description: str
-    configured: bool
-    active: bool
-
-
-class DataSourcesOut(BaseModel):
-    current: str
-    active_adapter: str
-    options: list[DataSourceOptionOut]
-
-
-class SetDataSourceIn(BaseModel):
-    source: str
-
-
 class SetIngestSettingsIn(BaseModel):
     max_stocks_per_concept: int = Field(ge=0, le=500, description="0=不限制，分析全部成分股")
 
@@ -100,14 +80,22 @@ class SetScanSectorsIn(BaseModel):
     selected_codes: list[str] = Field(default_factory=list)
 
 
+class TusharePingOut(BaseModel):
+    ok: bool
+    tushare_configured: bool = False
+    adapter: str = ""
+    endpoint: str = ""
+    latency_ms: Optional[int] = None
+    sample_rows: Optional[int] = None
+    error_type: Optional[str] = None
+    error_message: Optional[str] = None
+
+
 class SystemStatusOut(BaseModel):
     adapter: str
-    demo_mode: bool
     is_live_data: bool = False
     data_source_label: str = ""
     data_source_short: str = ""
-    data_source: str = "auto"
-    jq_configured: bool = False
     tushare_configured: bool = False
     universe_total: int
     ingest_max_concepts: int
@@ -118,7 +106,6 @@ class SystemStatusOut(BaseModel):
     selected_sector_count: int = 0
     scan_volatile_storage: bool = False
     scan_task: TaskStatusOut
-    jq_data_range: Optional[JqDataRangeOut] = None
     default_scan_date: Optional[date] = None
     default_scan_start: Optional[date] = None
     default_scan_end: Optional[date] = None
@@ -153,6 +140,7 @@ class DashboardOut(BaseModel):
     market_env: Optional[MarketEnvOut]
     top_sectors: list[SectorScoreOut]
     latest_scan: Optional[datetime] = None
+    market_overview: Optional[dict[str, Any]] = None
 
 
 class StockPctDayOut(BaseModel):
@@ -171,12 +159,13 @@ class StockInSector(BaseModel):
     pct_history: list[StockPctDayOut] = Field(default_factory=list)
 
 
-class ScoreDimensionOut(BaseModel):
+class RuleEvalOut(BaseModel):
     key: str
     label: str
-    weight_pct: int
-    score: float
-    description: str
+    passed: bool
+    threshold: str = ""
+    current: Any = None
+    source: str = "auto"
 
 
 class FlowDayOut(BaseModel):
@@ -192,8 +181,13 @@ class SectorDetailOut(BaseModel):
     pct_display_days: list[date] = Field(default_factory=list)
     stage: str
     total_score: float
-    scores: dict[str, float]
-    score_dimensions: list[ScoreDimensionOut] = []
+    is_main_line: bool = False
+    main_line_tier: str = "rotation"
+    confirm_state: str = "pending"
+    exit_state: str = "normal"
+    source_tag: str = "auto"
+    rules: list[RuleEvalOut] = Field(default_factory=list)
+    rule_fail_reasons: list[str] = Field(default_factory=list)
     limit_up_count: int
     big_yang_count: int
     net_inflow_main: float
@@ -208,6 +202,7 @@ class SectorDetailOut(BaseModel):
     stocks: list[StockInSector] = []
     history: list[dict[str, Any]] = []
     flow_history: list[FlowDayOut] = []
+    data_missing_items: list[str] = []
 
 
 class ReviewDayOut(BaseModel):
@@ -215,8 +210,65 @@ class ReviewDayOut(BaseModel):
     sectors: list[dict[str, Any]]
 
 
+class ScoreSnapshotOut(BaseModel):
+    total: float = 0
+    persistence: float = 0
+    capital: float = 0
+    breadth: float = 0
+    leader: float = 0
+    relative: float = 0
+    stage: str = "dormant"
+    is_main_line: bool = False
+    main_line_tier: str = "rotation"
+
+
+class BacktestSectorCandidateOut(BaseModel):
+    sector_code: str
+    sector_name: str
+    rank: int = 0
+    total_score: float = 0
+    stage: str = "dormant"
+    persistence_score: float = 0
+    capital_score: float = 0
+    breadth_score: float = 0
+    leader_score: float = 0
+    relative_score: float = 0
+    is_main_line: bool = False
+    main_line_tier: str = "rotation"
+    confirm_state: str = "pending"
+    exit_state: str = "normal"
+    source_tag: str = "auto"
+    rules: list[dict[str, Any]] = Field(default_factory=list)
+    rule_fail_reasons: list[str] = Field(default_factory=list)
+
+
+class AStrategyManualInputIn(BaseModel):
+    trade_date: date
+    sector_code: str
+    auction_passed: Optional[bool] = None
+    negative_news: Optional[bool] = None
+    northbound_5d_yi: Optional[float] = None
+    notes: str = ""
+
+
+class AStrategyManualInputOut(BaseModel):
+    trade_date: date
+    sector_code: str
+    values: dict[str, Any] = Field(default_factory=dict)
+
+
+class AStrategyListOut(BaseModel):
+    trade_date: Optional[date]
+    sectors: list[SectorScoreOut] = Field(default_factory=list)
+
+
+class BacktestSectorCandidatesOut(BaseModel):
+    trade_date: Optional[date] = None
+    sectors: list[BacktestSectorCandidateOut] = Field(default_factory=list)
+
+
 class BacktestCreate(BaseModel):
-    strategy_id: str = "fish_body"
+    strategy_id: str = "main_line_rotation"
     start_date: date
     end_date: date
     params: dict[str, Any] = Field(default_factory=dict)
@@ -230,6 +282,7 @@ class BacktestRunOut(BaseModel):
     strategy_id: str
     start_date: date
     end_date: date
+    params: dict[str, Any] = {}
     progress: int
     total_days: int
     error_message: Optional[str] = None
@@ -260,6 +313,8 @@ class BacktestTradeOut(BaseModel):
     entry_timing_cn: str = "信号日次日开盘价"
     exit_timing_cn: str = "卖出信号日次日开盘价"
     human_reason: str
+    entry_scores: Optional[ScoreSnapshotOut] = None
+    exit_scores: Optional[ScoreSnapshotOut] = None
 
 
 class EquityPointOut(BaseModel):

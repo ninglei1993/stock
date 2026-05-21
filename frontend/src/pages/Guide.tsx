@@ -5,7 +5,7 @@ const STEPS = [
     n: 1,
     title: "执行收盘扫描",
     where: "仪表盘",
-    desc: "每个交易日收盘后（约 15:10 后），点击「执行收盘扫描」。系统拉取板块行情与资金流，计算五维评分与四阶段。",
+    desc: "每个交易日收盘后（约 15:10 后），点击「执行收盘扫描」。系统拉取板块行情与资金流，按 A 策略主线 6 条硬规则评估，并给出每条指标是否满足与当前值。",
   },
   {
     n: 2,
@@ -17,7 +17,7 @@ const STEPS = [
     n: 3,
     title: "锁定 Top5 主线",
     where: "仪表盘 · 主线卡片 / 板块列表",
-    desc: "按强度分排序。萌芽=可观察埋伏；发酵=鱼身持有；高潮/衰退=考虑撤退。板块列表可查看全部已评分板块，点击详情进入五维拆解。",
+    desc: "板块卡片会标注「主线通过 / 未通过」。点击详情可查看满足/不满足的具体指标，以及每项指标的阈值与当前值。",
   },
   {
     n: 4,
@@ -37,7 +37,6 @@ const RULES = [
   "盘面先热，消息后吹；资金先进，散户后跟。",
   "只吃鱼身：萌芽/发酵关注，高潮/衰退撤退。",
   "一日游、资金脉冲型假主线会被降权或标记观察。",
-  "数据默认演示模式（DEMO）；配置聚宽 JQData 后可接实盘数据。",
 ];
 
 export default function Guide() {
@@ -112,22 +111,19 @@ export default function Guide() {
         </table>
       </div>
 
-      <h3 className="section-title">五维评分说明</h3>
-      <div className="dim-grid">
+      <h3 className="section-title">A策略主线硬指标（6条全满足=主线）</h3>
+      <ul className="rules-list card-glass">
         {[
-          { w: "25%", name: "持续性", d: "近3日涨幅分位、抗跌" },
-          { w: "30%", name: "资金", d: "主力连续净流入" },
-          { w: "25%", name: "广度", d: "涨停/大阳/上涨家数" },
-          { w: "15%", name: "龙头", d: "连板高度与龙头强度" },
-          { w: "5%", name: "相对强度", d: "相对沪深300超额" },
-        ].map((d) => (
-          <div key={d.name} className="dim-card card-glass">
-            <div className="dim-weight">{d.w}</div>
-            <div className="dim-name">{d.name}</div>
-            <div className="dim-desc">{d.d}</div>
-          </div>
+          "趋势条件：收盘价站上 MA20 且 MA20 向上。",
+          "20日涨幅：≥10%（≥18% 为顶级主线）。",
+          "量能持续性：放量（≥1.6×5日均量）且成交额占比满足门槛。",
+          "资金连续流入：主力连续净流入（北向 5 日净流入可人工补录）。",
+          "赚钱效应：上涨占比、涨停家数、最高连板高度达标。",
+          "竞价与基本面无压制：竞价门槛与利空项可人工补录。",
+        ].map((r) => (
+          <li key={r}>{r}</li>
         ))}
-      </div>
+      </ul>
 
       <h3 className="section-title">原则与免责</h3>
       <ul className="rules-list card-glass">

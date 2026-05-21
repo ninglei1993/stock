@@ -3,16 +3,38 @@
 import logging
 
 from app.adapters.base import ConceptInfo
-from app.config import settings
 from app.services.ingest_settings_store import read_scan_sectors_selection
 
 logger = logging.getLogger(__name__)
+
+
+def select_concepts_for_backtest(
+    concepts: list[ConceptInfo],
+    sector_codes: list[str],
+) -> list[ConceptInfo]:
+    if not sector_codes:
+        return []
+    selected_set = set(sector_codes)
+    matched = [c for c in concepts if c.code in selected_set]
+    logger.info(
+        "[流程] 回测板块池：%d / %d 个（勾选 %d 项）",
+        len(matched),
+        len(concepts),
+        len(sector_codes),
+    )
+    return matched
 
 
 def select_concepts_for_ingest(
     concepts: list[ConceptInfo],
     max_concepts: int | None = None,
 ) -> list[ConceptInfo]:
+    from app.services.backtest_context import get_backtest_sector_codes
+
+    bt_codes = get_backtest_sector_codes()
+    if bt_codes is not None:
+        return select_concepts_for_backtest(concepts, bt_codes)
+
     use_explicit, selected_codes = read_scan_sectors_selection()
     universe = len(concepts)
 
@@ -34,22 +56,12 @@ def select_concepts_for_ingest(
                 "[流程] 以下勾选代码不在概念列表中，已忽略: %s",
                 sorted(missing)[:10],
             )
-    elif settings.ingest_concept_filter.strip():
-        key = settings.ingest_concept_filter.strip().upper()
-        matched = [c for c in concepts if key in c.name.upper()]
-        logger.info(
-            "[流程] 使用环境关键词 %r 筛选：%d / %d 个板块",
-            settings.ingest_concept_filter,
-            len(matched),
-            universe,
-        )
-        concepts = matched
-
-    if max_concepts is None:
-        max_concepts = settings.ingest_max_concepts
-    if max_concepts > 0 and not use_explicit:
+    # 扫盘范围以用户输入为准：
+    # - 用户勾选开启时：只扫勾选项
+    # - 未开启勾选时：默认全量概念（不再使用 INGEST_CONCEPT_FILTER/INGEST_MAX_CONCEPTS）
+    if max_concepts is not None and max_concepts > 0 and not use_explicit:
         concepts = concepts[:max_concepts]
-        logger.info("[流程] 环境上限 ingest_max_concepts=%d，保留前 %d 个", max_concepts, len(concepts))
+        logger.info("[流程] 临时上限 max_concepts=%d，保留前 %d 个", max_concepts, len(concepts))
     return concepts
 
 
@@ -60,9 +72,4 @@ def resolve_scan_scope_label() -> str:
         if codes:
             return f"已勾选 {len(codes)} 个板块"
         return "勾选模式（未选板块）"
-    key = settings.ingest_concept_filter.strip()
-    if key:
-        return f"关键词「{key}」"
-    if settings.ingest_max_concepts > 0:
-        return f"列表前 {settings.ingest_max_concepts} 个概念"
-    return "全部概念"
+    return "全部概念（未启用仅勾选）"

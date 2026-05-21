@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 _allowed_days: Optional[tuple[date, ...]] = None
 _calendar_start: Optional[date] = None
 _calendar_end: Optional[date] = None
+_market_cache_stats: dict[str, int] = {}
 
 
 def set_scan_bounds(
@@ -58,10 +59,23 @@ def get_calendar_bounds() -> tuple[Optional[date], Optional[date]]:
 
 
 def clear_scan_context() -> None:
-    global _allowed_days, _calendar_start, _calendar_end
+    global _allowed_days, _calendar_start, _calendar_end, _market_cache_stats
     _allowed_days = None
     _calendar_start = None
     _calendar_end = None
+    _market_cache_stats = {}
+
+
+def set_market_cache_stats(stats: dict[str, int]) -> None:
+    global _market_cache_stats
+    _market_cache_stats = dict(stats or {})
+
+
+def pop_market_cache_stats() -> dict[str, int]:
+    global _market_cache_stats
+    stats = dict(_market_cache_stats)
+    _market_cache_stats = {}
+    return stats
 
 
 def lookback_trade_days(anchor: date, lookback: int) -> list[date]:

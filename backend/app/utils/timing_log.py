@@ -16,14 +16,15 @@ def log_elapsed(
     *,
     logger_obj: Optional[logging.Logger] = None,
     extra: str = "",
+    level: int = logging.DEBUG,
 ) -> Iterator[None]:
-    """记录操作起止与耗时（秒）。"""
+    """记录操作起止与耗时（秒）。默认 DEBUG，关键步骤可传 level=logging.INFO。"""
     log = logger_obj or logger
     suffix = f" {extra}" if extra else ""
-    log.info("[数据] %s 开始%s", operation, suffix)
+    log.log(level, "[数据] %s 开始%s", operation, suffix)
     t0 = time.monotonic()
     try:
         yield
     finally:
         elapsed = time.monotonic() - t0
-        log.info("[数据] %s 完成 耗时=%.2fs%s", operation, elapsed, suffix)
+        log.log(level, "[数据] %s 完成 耗时=%.2fs%s", operation, elapsed, suffix)

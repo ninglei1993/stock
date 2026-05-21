@@ -1,5 +1,8 @@
 .env
 data_source.override.json
+data/market/
+data/scan/
+!data/.gitkeep
 .venv/
 __pycache__/
 *.pyc

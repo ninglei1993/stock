@@ -44,6 +44,7 @@ export const ALERT_LABEL: Record<string, string> = {
 };
 
 export const STRATEGY_LABEL: Record<string, string> = {
+  main_line_rotation: "主线轮动（单仓龙头）",
   fish_body: "鱼身策略（发酵买/高潮卖）",
   sprout_probe: "萌芽试探",
   fixed_hold: "固定持有（基准）",

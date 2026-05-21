@@ -8,6 +8,7 @@ type Props = {
 export default function SectorScanPicker({ disabled }: Props) {
   const [universe, setUniverse] = useState<ConceptItem[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [historySelected, setHistorySelected] = useState<Set<string>>(new Set());
   const [useExplicit, setUseExplicit] = useState(false);
   const [filter, setFilter] = useState("");
   const [loading, setLoading] = useState(true);
@@ -20,7 +21,9 @@ export default function SectorScanPicker({ disabled }: Props) {
       .getScanSectors()
       .then((res) => {
         setUniverse(res.universe);
-        setSelected(new Set(res.selected_codes));
+        const selectedSet = new Set(res.selected_codes);
+        setSelected(selectedSet);
+        setHistorySelected(new Set(res.selected_codes));
         setUseExplicit(res.use_explicit_selection);
       })
       .catch((e) => setError(e instanceof Error ? e.message : "加载板块失败"))
@@ -29,17 +32,46 @@ export default function SectorScanPicker({ disabled }: Props) {
 
   useEffect(() => {
     load();
+    const onApplied = () => load();
+    window.addEventListener("themeradar:scan-history-applied", onApplied);
+    return () => window.removeEventListener("themeradar:scan-history-applied", onApplied);
   }, [load]);
 
   const filtered = useMemo(() => {
     const q = filter.trim().toUpperCase();
-    if (!q) return universe;
-    return universe.filter(
-      (c) =>
-        c.sector_name.toUpperCase().includes(q) ||
-        c.sector_code.toUpperCase().includes(q)
-    );
-  }, [universe, filter]);
+    const base = q
+      ? universe.filter(
+          (c) =>
+            c.sector_name.toUpperCase().includes(q) ||
+            c.sector_code.toUpperCase().includes(q)
+        )
+      : universe;
+    return [...base].sort((a, b) => {
+      const aSelected = selected.has(a.sector_code) ? 1 : 0;
+      const bSelected = selected.has(b.sector_code) ? 1 : 0;
+      if (aSelected !== bSelected) return bSelected - aSelected;
+      return a.sector_name.localeCompare(b.sector_name, "zh-Hans-CN");
+    });
+  }, [universe, filter, selected]);
+
+  const historySelectedCount = useMemo(() => {
+    let count = 0;
+    selected.forEach((code) => {
+      if (historySelected.has(code)) count += 1;
+    });
+    return count;
+  }, [selected, historySelected]);
+
+  const isHistorySelected = (code: string) => historySelected.has(code);
+  const isSelected = (code: string) => selected.has(code);
+
+  const filteredCountBySelection = useMemo(() => {
+    let selectedCount = 0;
+    filtered.forEach((c) => {
+      if (selected.has(c.sector_code)) selectedCount += 1;
+    });
+    return selectedCount;
+  }, [filtered, selected]);
 
   const persist = async (nextSelected: Set<string>, nextExplicit: boolean) => {
     setSaving(true);
@@ -80,7 +112,7 @@ export default function SectorScanPicker({ disabled }: Props) {
     void persist(next, true);
   };
 
-  const useEnvFilter = () => {
+  const useAllConcepts = () => {
     setUseExplicit(false);
     void persist(selected, false);
   };
@@ -136,10 +168,10 @@ export default function SectorScanPicker({ disabled }: Props) {
           className="btn btn-ghost"
           style={{ fontSize: "0.8rem", padding: "0.25rem 0.6rem" }}
           disabled={disabled || saving}
-          onClick={useEnvFilter}
-          title="改用 .env 中 INGEST_CONCEPT_FILTER / INGEST_MAX_CONCEPTS"
+          onClick={useAllConcepts}
+          title="关闭仅勾选，改为全概念扫描"
         >
-          使用环境关键词
+          扫描全部概念
         </button>
       </div>
       <p style={{ fontSize: "0.78rem", color: "var(--muted)", margin: "0 0 0.5rem" }}>
@@ -147,9 +179,10 @@ export default function SectorScanPicker({ disabled }: Props) {
           <>
             已勾选 <strong>{selected.size}</strong> 个板块，扫描时仅处理勾选项。
             {selected.size === 0 ? "（请至少勾选一个）" : ""}
+            {historySelectedCount > 0 ? ` 其中历史勾选 ${historySelectedCount} 个。` : ""}
           </>
         ) : (
-          <>未启用勾选模式，扫描使用环境变量关键词筛选（见 .env）。勾选任意板块将自动切换为「仅扫勾选」。</>
+          <>未启用勾选模式，扫描将覆盖全部概念。勾选任意板块会自动切换为「仅扫勾选」。</>
         )}
         {saving ? " 保存中…" : ""}
       </p>
@@ -166,6 +199,10 @@ export default function SectorScanPicker({ disabled }: Props) {
           background: "rgba(0,0,0,0.15)",
         }}
       >
+        <p style={{ margin: "0 0 0.45rem", fontSize: "0.74rem", color: "var(--muted)" }}>
+          已勾选项自动置顶；带「历史勾选」标签表示来自上一次保存的板块配置。
+          {filtered.length > 0 ? ` 当前筛选命中 ${filtered.length} 个，已勾选 ${filteredCountBySelection} 个。` : ""}
+        </p>
         {filtered.length === 0 ? (
           <p style={{ color: "var(--muted)", fontSize: "0.85rem" }}>无匹配板块</p>
         ) : (
@@ -183,7 +220,7 @@ export default function SectorScanPicker({ disabled }: Props) {
                 >
                   <input
                     type="checkbox"
-                    checked={selected.has(c.sector_code)}
+                    checked={isSelected(c.sector_code)}
                     disabled={disabled || saving}
                     onChange={() => toggle(c.sector_code)}
                   />
@@ -192,6 +229,17 @@ export default function SectorScanPicker({ disabled }: Props) {
                     <span style={{ color: "var(--muted)", marginLeft: "0.35rem", fontSize: "0.72rem" }}>
                       {c.sector_code}
                     </span>
+                    {isSelected(c.sector_code) && (
+                      <span
+                        style={{
+                          marginLeft: "0.35rem",
+                          fontSize: "0.68rem",
+                          color: isHistorySelected(c.sector_code) ? "#f59e0b" : "var(--muted)",
+                        }}
+                      >
+                        {isHistorySelected(c.sector_code) ? "历史勾选" : "已勾选"}
+                      </span>
+                    )}
                   </span>
                 </label>
               </li>

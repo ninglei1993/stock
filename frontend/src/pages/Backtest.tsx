@@ -10,8 +10,9 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { api, BacktestRun, BacktestReport, BacktestTrade } from "../api";
-import { pctClass, STRATEGY_LABEL, RUN_STATUS_LABEL } from "../utils";
+import { api, BacktestRun, BacktestReport, BacktestTrade, ScoreSnapshot } from "../api";
+import BacktestSectorPicker from "../components/BacktestSectorPicker";
+import { pctClass, STAGE_LABEL, STRATEGY_LABEL, RUN_STATUS_LABEL } from "../utils";
 import {
   SECTOR_SELECT_ALGO,
   STOCK_SELECT_ALGO,
@@ -19,11 +20,21 @@ import {
 } from "../constants/strategyAlgo";
 
 const STRATEGIES = [
+  { id: "main_line_rotation", name: STRATEGY_LABEL.main_line_rotation },
   { id: "fish_body", name: STRATEGY_LABEL.fish_body },
   { id: "sprout_probe", name: STRATEGY_LABEL.sprout_probe },
   { id: "fixed_hold", name: STRATEGY_LABEL.fixed_hold },
   { id: "top5_rotation", name: STRATEGY_LABEL.top5_rotation },
 ];
+
+const DEFAULT_CAPITAL = 1_000_000;
+
+function formatScoreSnap(s?: ScoreSnapshot | null): string {
+  if (!s) return "—";
+  const stage = STAGE_LABEL[s.stage] || s.stage;
+  const tier = s.main_line_tier ? ` ${s.main_line_tier}` : "";
+  return `总${s.total.toFixed(0)} ${stage}${tier} | 持${s.persistence.toFixed(0)} 资${s.capital.toFixed(0)} 广${s.breadth.toFixed(0)} 龙${s.leader.toFixed(0)} 相${s.relative.toFixed(0)}`;
+}
 
 function StrategyAlgoPanel({ strategyId }: { strategyId: string }) {
   const rule = STRATEGY_RULES[strategyId] || STRATEGY_RULES.fish_body;
@@ -48,9 +59,9 @@ export default function Backtest() {
   const [trades, setTrades] = useState<BacktestTrade[]>([]);
   const [startDate, setStartDate] = useState("2024-04-01");
   const [endDate, setEndDate] = useState("2025-04-01");
-  const [jqMin, setJqMin] = useState("");
-  const [jqMax, setJqMax] = useState("");
-  const [strategy, setStrategy] = useState("fish_body");
+  const [strategy, setStrategy] = useState("main_line_rotation");
+  const [initialCapital, setInitialCapital] = useState(DEFAULT_CAPITAL);
+  const [selectedSectors, setSelectedSectors] = useState<Set<string>>(new Set());
   const [submitting, setSubmitting] = useState(false);
   const [loadError, setLoadError] = useState("");
 
@@ -59,12 +70,8 @@ export default function Backtest() {
   useEffect(() => {
     loadRuns();
     api.systemStatus().then((s) => {
-      if (!s.jq_data_range) return;
-      const { start, end } = s.jq_data_range;
-      setJqMin(start);
-      setJqMax(end);
-      setStartDate(start);
-      setEndDate(end);
+      if (s.default_scan_start) setStartDate(s.default_scan_start);
+      if (s.default_scan_end) setEndDate(s.default_scan_end);
     });
   }, []);
 
@@ -72,42 +79,84 @@ export default function Backtest() {
     if (!id) {
       setReport(null);
       setTrades([]);
+      setLoadError("");
       return;
     }
+
     const runId = parseInt(id, 10);
-    setLoadError("");
-    const poll = () => {
-      api
-        .getBacktest(runId)
-        .then((run) => {
-          if (run.status === "done") {
-            return Promise.all([
-              api.backtestReport(runId),
-              api.backtestTrades(runId),
-            ]).then(([r, t]) => {
-              setReport(r);
-              setTrades(t);
-            });
-          } else if (run.status === "failed") {
-            setLoadError(run.error_message || "回测失败");
-          } else if (run.status === "running" || run.status === "pending") {
-            setTimeout(poll, 2000);
-          }
-          loadRuns();
-        })
-        .catch((e) => setLoadError(e instanceof Error ? e.message : "加载失败"));
+    if (Number.isNaN(runId)) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const loadDone = async () => {
+      const [r, t] = await Promise.all([
+        api.backtestReport(runId),
+        api.backtestTrades(runId),
+      ]);
+      if (!cancelled) {
+        setReport(r);
+        setTrades(t);
+        loadRuns();
+      }
     };
+
+    const poll = async () => {
+      if (cancelled) return;
+      try {
+        const run = await api.getBacktest(runId);
+        if (cancelled) return;
+
+        if (run.status === "done") {
+          await loadDone();
+          return;
+        }
+        if (run.status === "failed") {
+          setLoadError(run.error_message || "回测失败");
+          return;
+        }
+        if (run.status === "running" || run.status === "pending") {
+          timer = setTimeout(poll, 3000);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setLoadError(e instanceof Error ? e.message : "加载失败");
+        }
+      }
+    };
+
+    setLoadError("");
+    setReport(null);
+    setTrades([]);
     poll();
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [id]);
 
   const submit = async () => {
+    if (strategy === "main_line_rotation" && selectedSectors.size === 0) {
+      alert("请至少勾选一个回测板块");
+      return;
+    }
     setSubmitting(true);
     try {
+      const params: Record<string, unknown> =
+        strategy === "main_line_rotation"
+          ? {
+              sector_codes: Array.from(selectedSectors),
+              initial_capital: initialCapital,
+              position_ratio: 0.95,
+              main_line_streak_days: 3,
+            }
+          : { max_positions: 3, position_size: 0.1 };
       const run = await api.createBacktest({
         strategy_id: strategy,
         start_date: startDate,
         end_date: endDate,
-        params: { max_positions: 3, position_size: 0.1 },
+        params,
       });
       window.location.href = `/backtest/${run.id}`;
     } catch (e) {
@@ -118,6 +167,23 @@ export default function Backtest() {
   };
 
   const activeStrategy = report?.run?.strategy_id || strategy;
+  const initialCapitalFromRun = Number(
+    (report?.run?.params as { initial_capital?: number } | undefined)?.initial_capital
+  );
+  const useAbsoluteEquity =
+    (activeStrategy === "main_line_rotation" ||
+      (report?.equity_curve?.length && (report.equity_curve[0]?.equity ?? 0) >= 10_000)) &&
+    !!report?.equity_curve?.length;
+
+  const chartData =
+    report?.equity_curve?.map((p) => {
+      const bench =
+        useAbsoluteEquity && p.benchmark < 1000
+          ? p.benchmark *
+            (initialCapitalFromRun >= 10_000 ? initialCapitalFromRun : DEFAULT_CAPITAL)
+          : p.benchmark;
+      return { ...p, benchmark: bench };
+    }) ?? [];
 
   return (
     <>
@@ -129,10 +195,14 @@ export default function Backtest() {
       {!id && (
         <div className="card-glass" style={{ marginBottom: "1.5rem" }}>
           <h3 style={{ fontSize: "1rem", marginBottom: "1rem" }}>新建回测</h3>
-          {jqMin && jqMax && (
-            <p style={{ fontSize: "0.8rem", color: "var(--muted)", marginBottom: "0.75rem" }}>
-              聚宽数据权限：{jqMin} ~ {jqMax}（超出范围将自动截断）
-            </p>
+          {strategy === "main_line_rotation" && (
+            <div style={{ marginBottom: "1rem" }}>
+              <BacktestSectorPicker
+                selected={selectedSectors}
+                onChange={setSelectedSectors}
+                disabled={submitting}
+              />
+            </div>
           )}
           <div className="form-row">
             <div className="form-group">
@@ -140,8 +210,6 @@ export default function Backtest() {
               <input
                 type="date"
                 value={startDate}
-                min={jqMin || undefined}
-                max={jqMax || undefined}
                 onChange={(e) => setStartDate(e.target.value)}
               />
             </div>
@@ -150,8 +218,6 @@ export default function Backtest() {
               <input
                 type="date"
                 value={endDate}
-                min={jqMin || undefined}
-                max={jqMax || undefined}
                 onChange={(e) => setEndDate(e.target.value)}
               />
             </div>
@@ -168,6 +234,20 @@ export default function Backtest() {
                 ))}
               </select>
             </div>
+            {strategy === "main_line_rotation" && (
+              <div className="form-group">
+                <label>初始资金（元）</label>
+                <input
+                  type="number"
+                  min={100000}
+                  step={100000}
+                  value={initialCapital}
+                  onChange={(e) =>
+                    setInitialCapital(Number(e.target.value) || DEFAULT_CAPITAL)
+                  }
+                />
+              </div>
+            )}
             <button className="btn btn-primary" onClick={submit} disabled={submitting}>
               {submitting ? "提交中…" : "开始回测"}
             </button>
@@ -209,13 +289,26 @@ export default function Backtest() {
           </div>
           <div className="card-glass" style={{ height: 320, marginBottom: "1rem" }}>
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={report.equity_curve}>
+              <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" />
                 <XAxis dataKey="trade_date" tick={{ fill: "#94a3b8", fontSize: 10 }} />
-                <YAxis tick={{ fill: "#94a3b8", fontSize: 10 }} domain={["auto", "auto"]} />
+                <YAxis
+                  tick={{ fill: "#94a3b8", fontSize: 10 }}
+                  domain={["auto", "auto"]}
+                  tickFormatter={(v) =>
+                    useAbsoluteEquity ? `${(Number(v) / 10000).toFixed(0)}万` : String(v)
+                  }
+                />
                 <Tooltip contentStyle={{ background: "#1a222d", border: "1px solid #334155" }} />
                 <Legend />
-                <Line type="monotone" dataKey="equity" name="策略净值" stroke="#60a5fa" dot={false} strokeWidth={2} />
+                <Line
+                  type="monotone"
+                  dataKey="equity"
+                  name={useAbsoluteEquity ? "策略资产" : "策略净值"}
+                  stroke="#60a5fa"
+                  dot={false}
+                  strokeWidth={2}
+                />
                 <Line type="monotone" dataKey="benchmark" name="沪深300" stroke="#64748b" dot={false} />
               </LineChart>
             </ResponsiveContainer>
@@ -231,10 +324,12 @@ export default function Backtest() {
                   <th>买入代码</th>
                   <th>买入名称</th>
                   <th>买入价</th>
+                  <th>买入规则快照</th>
                   <th>卖出日</th>
                   <th>卖出代码</th>
                   <th>卖出名称</th>
                   <th>卖出价</th>
+                  <th>卖出规则快照</th>
                   <th>持仓天数</th>
                   <th>收益率</th>
                   <th>信号</th>
@@ -249,13 +344,21 @@ export default function Backtest() {
                     <td style={{ fontFamily: "JetBrains Mono" }}>{t.stock_code}</td>
                     <td>{t.stock_name || "—"}</td>
                     <td>{t.entry_price.toFixed(2)}</td>
-                    <td>{t.exit_date || "—"}</td>
+                    <td style={{ fontSize: "0.75rem", maxWidth: "12rem" }}>
+                      {formatScoreSnap(t.entry_scores)}
+                    </td>
+                    <td>{t.exit_date || (t.alert_code === "MAIN_LINE_BUY" ? "持仓中" : "—")}</td>
                     <td style={{ fontFamily: "JetBrains Mono" }}>{t.sell_stock_code || t.stock_code}</td>
                     <td>{t.sell_stock_name || t.stock_name || "—"}</td>
                     <td>{t.exit_price != null ? t.exit_price.toFixed(2) : "—"}</td>
+                    <td style={{ fontSize: "0.75rem", maxWidth: "12rem" }}>
+                      {formatScoreSnap(t.exit_scores)}
+                    </td>
                     <td>{t.holding_days != null ? `${t.holding_days} 天` : "—"}</td>
                     <td className={pctClass(t.return_pct || 0)}>
-                      {t.return_pct != null ? `${t.return_pct}%` : "—"}
+                      {t.return_pct != null
+                        ? `${t.return_pct}%${!t.exit_date && t.alert_code === "MAIN_LINE_BUY" ? "（按结束日收盘估）" : ""}`
+                        : "—"}
                     </td>
                     <td>{t.alert_name_cn || t.alert_code}</td>
                   </tr>

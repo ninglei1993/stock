@@ -6,7 +6,7 @@ import SectorDetail from "./pages/SectorDetail";
 import Review from "./pages/Review";
 import Backtest from "./pages/Backtest";
 import Guide from "./pages/Guide";
-import DataSourceBadge from "./components/DataSourceBadge";
+import AStrategy from "./pages/AStrategy";
 import TaskStatusBar from "./components/TaskStatusBar";
 
 export default function App() {
@@ -19,9 +19,6 @@ export default function App() {
         <aside className="sidebar">
           <h1>主线雷达</h1>
           <p className="tagline">盘面先热，消息后吹</p>
-          <div style={{ marginBottom: "1rem" }}>
-            <DataSourceBadge compact />
-          </div>
           <nav>
             <NavLink to="/" className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`} end>
               仪表盘
@@ -34,6 +31,9 @@ export default function App() {
             </NavLink>
             <NavLink to="/backtest" className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
               回测中心
+            </NavLink>
+            <NavLink to="/a-strategy" className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
+              A策略
             </NavLink>
             <NavLink to="/guide" className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
               使用指南
@@ -53,6 +53,7 @@ export default function App() {
             <Route path="/review" element={<Review />} />
             <Route path="/backtest" element={<Backtest />} />
             <Route path="/backtest/:id" element={<Backtest />} />
+            <Route path="/a-strategy" element={<AStrategy />} />
             <Route path="/guide" element={<Guide />} />
           </Routes>
         </main>

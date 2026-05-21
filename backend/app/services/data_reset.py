@@ -20,6 +20,18 @@ from app.models.tables import (
 logger = logging.getLogger(__name__)
 
 
+def clear_file_scan_storage() -> None:
+    """删除 data/market 与 data/scan 下全部落盘数据。"""
+    from app.services.latest_scan_store import LatestScanStore
+    from app.services.market_cache import get_market_cache
+    from app.services.scan_context import clear_scan_context
+
+    get_market_cache().clear_all()
+    LatestScanStore.clear()
+    clear_scan_context()
+    logger.info("[系统] 已清空本地 JSON（全市场行情缓存 + 最新扫盘结果）")
+
+
 def clear_runtime_caches() -> None:
     import app.adapters.factory as factory_mod
 
@@ -35,25 +47,8 @@ def clear_runtime_caches() -> None:
     clear_name_cache()
     clear_tushare_caches()
     clear_volatile_snapshots()
+    clear_file_scan_storage()
     logger.info("[系统] 已清空运行时缓存与内存快照")
-
-
-def clear_demo_data_source_override() -> str | None:
-    """若曾选演示数据源，改为 tushare/auto。"""
-    from app.config import settings
-    from app.services.data_source_store import clear_override, read_override, write_override
-
-    cur = read_override()
-    if cur != "demo":
-        return cur
-    if settings.tushare_configured():
-        write_override("tushare")
-        return "tushare"
-    if settings.jq_configured():
-        write_override("jqdata")
-        return "jqdata"
-    clear_override()
-    return None
 
 
 async def clear_scan_database(session: AsyncSession) -> dict[str, int]:

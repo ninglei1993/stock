@@ -58,20 +58,15 @@ def test_normalize_to_trade_day_snaps_weekend():
         date(2026, 4, 16),
         date(2026, 4, 17),
     ]
-    with patch("app.services.trade_calendar.get_adapter", return_value=mock_adapter):
+    with patch("app.adapters.factory.get_adapter", return_value=mock_adapter):
         assert normalize_to_trade_day(date(2026, 4, 18)) == date(2026, 4, 17)
         assert normalize_to_trade_day(date(2026, 4, 17)) == date(2026, 4, 17)
 
 
 def test_resolve_scan_date_tushare_mode():
-    mock_settings = MagicMock()
-    mock_settings.effective_data_source.return_value = "tushare"
-    mock_adapter = MagicMock()
-    mock_adapter.get_trade_days.return_value = [date(2026, 4, 17)]
     with (
-        patch("app.services.trade_calendar.settings", mock_settings),
-        patch("app.services.trade_calendar.should_use_jq_bounds", return_value=False),
-        patch("app.services.trade_calendar.get_adapter", return_value=mock_adapter),
+        patch("app.services.trade_calendar._latest_completed_trade_day", return_value=date(2026, 4, 17)),
+        patch("app.services.trade_calendar.normalize_to_trade_day", return_value=date(2026, 4, 17)),
     ):
         assert resolve_scan_date(date(2026, 4, 18)) == date(2026, 4, 17)
 
@@ -87,8 +82,7 @@ def test_resolve_scan_trade_days_sorts_descending_calendar():
     mock_adapter = MagicMock()
     mock_adapter.get_trade_days.return_value = unsorted
     with (
-        patch("app.services.trade_calendar.should_use_jq_bounds", return_value=False),
-        patch("app.services.trade_calendar.get_adapter", return_value=mock_adapter),
+        patch("app.adapters.factory.get_adapter", return_value=mock_adapter),
     ):
         picked = resolve_scan_trade_days(date(2026, 5, 1), date(2026, 5, 15), quiet=True)
     assert picked == sorted(unsorted)
@@ -155,8 +149,7 @@ def test_resolve_scan_trade_days_uses_explicit_calendar_range():
 
     mock_adapter.get_trade_days.side_effect = _trade_days
     with (
-        patch("app.services.trade_calendar.should_use_jq_bounds", return_value=False),
-        patch("app.services.trade_calendar.get_adapter", return_value=mock_adapter),
+        patch("app.adapters.factory.get_adapter", return_value=mock_adapter),
     ):
         picked = resolve_scan_trade_days(date(2026, 5, 1), date(2026, 5, 15))
     assert picked == may_days

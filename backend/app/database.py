@@ -59,9 +59,27 @@ async def init_db() -> None:
             ("sell_stock_name", "VARCHAR(64)"),
             ("holding_days", "INTEGER"),
             ("trade_mode", "VARCHAR(32) DEFAULT '板块龙头个股'"),
+            ("entry_scores", "JSONB"),
+            ("exit_scores", "JSONB"),
         ]:
             await conn.execute(
                 text(
                     f"ALTER TABLE backtest_trades ADD COLUMN IF NOT EXISTS {col} {col_type}"
+                )
+            )
+
+        # A策略重构新增字段：兼容旧库，避免 select sector_score_daily 时缺列报错。
+        for col, col_type in [
+            ("is_main_line", "BOOLEAN DEFAULT FALSE"),
+            ("main_line_tier", "VARCHAR(16) DEFAULT 'rotation'"),
+            ("confirm_state", "VARCHAR(16) DEFAULT 'pending'"),
+            ("exit_state", "VARCHAR(16) DEFAULT 'normal'"),
+            ("rules_json", "JSONB"),
+            ("rule_fail_reasons", "TEXT"),
+            ("source_tag", "VARCHAR(16) DEFAULT 'auto'"),
+        ]:
+            await conn.execute(
+                text(
+                    f"ALTER TABLE sector_score_daily ADD COLUMN IF NOT EXISTS {col} {col_type}"
                 )
             )

@@ -7,9 +7,12 @@ ALERT_LABELS: dict[str, str] = {
     "EXIT_CLIMAX": "高潮撤退",
     "EXIT_DECAY": "衰退清仓",
     "ENV_BAD": "环境恶化",
+    "MAIN_LINE_BUY": "主线买入",
+    "MAIN_LINE_ROTATE": "主线换仓",
 }
 
 STRATEGY_LABELS: dict[str, str] = {
+    "main_line_rotation": "主线轮动（单仓龙头）",
     "fish_body": "鱼身策略（发酵买/高潮卖）",
     "sprout_probe": "萌芽试探",
     "fixed_hold": "固定持有（基准）",

@@ -12,12 +12,14 @@ scheduler = AsyncIOScheduler()
 
 async def daily_scan_job() -> None:
     from app.services.ingestion import IngestionService
+    from app.services.latest_scan_store import LatestScanStore
     from app.services.scan_service import ScanService
+    from app.services.storage_mode import uses_file_scan_storage, uses_scan_memory_buffer
     from app.services.trade_calendar import resolve_scan_date
 
-    if settings.scan_volatile_storage:
+    if uses_scan_memory_buffer():
         logger.warning(
-            "SCAN_VOLATILE_STORAGE=true：定时任务不落库 PostgreSQL，仅更新内存仪表盘快照"
+            "扫盘使用内存/文件模式：定时任务不写 PostgreSQL 扫盘表"
         )
 
     trade_date = resolve_scan_date()
@@ -28,7 +30,7 @@ async def daily_scan_job() -> None:
             await ingestion.ingest_day(trade_date)
             scanner = ScanService(session)
             scores = await scanner.run_scan(trade_date)
-            if settings.scan_volatile_storage:
+            if uses_scan_memory_buffer():
                 from app.services.volatile_scan import (
                     VolatileDashboardSnapshot,
                     get_today_buffer,
@@ -37,14 +39,22 @@ async def daily_scan_job() -> None:
 
                 buf = get_today_buffer()
                 lm = dict(buf.leaders_by_code) if buf else {}
-                set_dashboard_snapshot(
-                    VolatileDashboardSnapshot(
-                        trade_date=trade_date,
-                        env=(buf.market_env if buf else None),
-                        scores=list(scores),
-                        leader_map=lm,
-                    )
+                snap = VolatileDashboardSnapshot(
+                    trade_date=trade_date,
+                    env=(buf.market_env if buf else None),
+                    scores=list(scores),
+                    leader_map=lm,
+                    scan_trade_days=[trade_date],
                 )
+                set_dashboard_snapshot(snap)
+                if uses_file_scan_storage():
+                    LatestScanStore.save(
+                        trade_date=trade_date,
+                        scores=list(scores),
+                        market_env=snap.env,
+                        leader_map=lm,
+                        scan_trade_days=[trade_date],
+                    )
                 await session.rollback()
             else:
                 await session.commit()

@@ -187,14 +187,14 @@ flowchart TD
     Q2 --> Q3[读 market_env_daily]
     Q3 --> LOOP[每个当日有数据的 sector_code]
     LOOP --> M[ThemeEngine.build_metrics_from_db]
-    M --> SC[ThemeEngine.score_sector 五维 + 阶段]
+    M --> SC[按 scoring_mode 执行评分/规则筛选]
     SC --> RANK[rank_sectors]
     RANK --> W1[(写入 sector_score_daily)]
     W1 --> ALT[AlertService.diff_alerts]
     ALT --> W2[(写入 alert)]
 ```
 
-五维权重：持续性 25% / 资金 30% / 广度 25% / 龙头 15% / 相对强度 5%（见 `theme_engine.py`）。
+`five_dim` 模式使用五维权重（见 `theme_engine.py`）；`a_strategy` 模式改为 PDF 六条硬规则筛选，不再做权重加总（见 `a_strategy_adapter.py` 与 `a_strategy_rules.py`）。
 
 ---
 

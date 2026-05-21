@@ -1,4 +1,4 @@
-"""合并 PostgreSQL 历史与 volatile 缓冲区中的当日扫描数据（供 ScanService 使用）。"""
+"""合并 PostgreSQL 历史与 volatile 缓冲区中的扫描数据（供 ScanService 使用）。"""
 
 from __future__ import annotations
 
@@ -7,18 +7,27 @@ from datetime import date
 from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.models.tables import MarketEnvDaily, SectorDaily, SectorFlowDaily, ThemeLeaderDaily
+from app.services.storage_mode import uses_scan_memory_buffer
 
 
-def _volatile_rows_for_date(buf, trade_date: date, attr: str) -> list:
-    """按记录上的 trade_date 取 volatile 行，不依赖 buf.trade_date 指针。"""
+def _volatile_rows_in_range(buf, attr: str, lookback_start: date, trade_date: date) -> list:
     bucket = getattr(buf, attr, None)
     if not bucket:
         return []
+    if isinstance(bucket, list):
+        return [
+            r
+            for r in bucket
+            if lookback_start <= getattr(r, "trade_date", trade_date) <= trade_date
+        ]
     if isinstance(bucket, dict):
-        return [r for r in bucket.values() if getattr(r, "trade_date", None) == trade_date]
-    return [r for r in bucket if getattr(r, "trade_date", None) == trade_date]
+        return [
+            r
+            for r in bucket.values()
+            if lookback_start <= getattr(r, "trade_date", trade_date) <= trade_date
+        ]
+    return []
 
 
 async def merge_sector_daily(
@@ -26,29 +35,19 @@ async def merge_sector_daily(
     lookback_start: date,
     trade_date: date,
 ) -> list:
+    if uses_scan_memory_buffer():
+        from app.services.volatile_scan import get_today_buffer
+
+        buf = get_today_buffer()
+        if buf and buf.sector_rows:
+            return _volatile_rows_in_range(buf, "sector_rows", lookback_start, trade_date)
+        return []
+
     stmt: Select[SectorDaily] = select(SectorDaily).where(
         SectorDaily.trade_date >= lookback_start,
         SectorDaily.trade_date <= trade_date,
     )
-    db_rows = (await session.execute(stmt)).scalars().all()
-    if not settings.scan_volatile_storage:
-        return list(db_rows)
-    from app.services.volatile_scan import get_today_buffer
-
-    buf = get_today_buffer()
-    if not buf:
-        return list(db_rows)
-    vol_rows = _volatile_rows_for_date(buf, trade_date, "sectors_by_code")
-    if not vol_rows:
-        return list(db_rows)
-    codes_to_replace = frozenset(r.sector_code for r in vol_rows)
-    merged = [
-        r
-        for r in db_rows
-        if not (r.trade_date == trade_date and r.sector_code in codes_to_replace)
-    ]
-    merged.extend(vol_rows)
-    return merged
+    return list((await session.execute(stmt)).scalars().all())
 
 
 async def merge_sector_flow(
@@ -56,58 +55,41 @@ async def merge_sector_flow(
     lookback_start: date,
     trade_date: date,
 ) -> list:
+    if uses_scan_memory_buffer():
+        from app.services.volatile_scan import get_today_buffer
+
+        buf = get_today_buffer()
+        if buf and buf.flow_rows:
+            return _volatile_rows_in_range(buf, "flow_rows", lookback_start, trade_date)
+        return []
+
     stmt = select(SectorFlowDaily).where(
         SectorFlowDaily.trade_date >= lookback_start,
         SectorFlowDaily.trade_date <= trade_date,
     )
-    db_rows = (await session.execute(stmt)).scalars().all()
-    if not settings.scan_volatile_storage:
-        return list(db_rows)
-    from app.services.volatile_scan import get_today_buffer
-
-    buf = get_today_buffer()
-    if not buf:
-        return list(db_rows)
-    vol_rows = _volatile_rows_for_date(buf, trade_date, "flows_by_code")
-    if not vol_rows:
-        return list(db_rows)
-    codes_to_replace = frozenset(r.sector_code for r in vol_rows)
-    merged = [
-        r
-        for r in db_rows
-        if not (r.trade_date == trade_date and r.sector_code in codes_to_replace)
-    ]
-    merged.extend(vol_rows)
-    return merged
+    return list((await session.execute(stmt)).scalars().all())
 
 
 async def merge_leaders(session: AsyncSession, trade_date: date) -> list:
-    stmt = select(ThemeLeaderDaily).where(ThemeLeaderDaily.trade_date == trade_date)
-    db_rows = (await session.execute(stmt)).scalars().all()
-    if not settings.scan_volatile_storage:
-        return list(db_rows)
-    from app.services.volatile_scan import get_today_buffer
+    if uses_scan_memory_buffer():
+        from app.services.volatile_scan import get_today_buffer
 
-    buf = get_today_buffer()
-    if not buf:
-        return list(db_rows)
-    vol_rows = _volatile_rows_for_date(buf, trade_date, "leaders_by_code")
-    if not vol_rows:
-        return list(db_rows)
-    codes_replace = frozenset(r.sector_code for r in vol_rows)
-    merged = [r for r in db_rows if r.sector_code not in codes_replace]
-    merged.extend(vol_rows)
-    return merged
+        buf = get_today_buffer()
+        if buf and buf.leader_rows:
+            return [r for r in buf.leader_rows if getattr(r, "trade_date", None) == trade_date]
+        return []
+
+    stmt = select(ThemeLeaderDaily).where(ThemeLeaderDaily.trade_date == trade_date)
+    return list((await session.execute(stmt)).scalars().all())
 
 
 async def get_market_env_merged(session: AsyncSession, trade_date: date):
     """优先使用 volatile 缓冲区中的市场环境。"""
-    if settings.scan_volatile_storage:
+    if uses_scan_memory_buffer():
         from app.services.volatile_scan import get_today_buffer
 
         buf = get_today_buffer()
         if buf and buf.market_env is not None:
             if getattr(buf.market_env, "trade_date", None) == trade_date:
                 return buf.market_env
-    row = await session.get(MarketEnvDaily, trade_date)
-    return row
+    return await session.get(MarketEnvDaily, trade_date)

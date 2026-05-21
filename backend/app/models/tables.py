@@ -100,6 +100,13 @@ class SectorScoreDaily(Base):
     is_filtered: Mapped[bool] = mapped_column(default=False)
     filter_reason: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
     position_hint: Mapped[str] = mapped_column(String(32), default="observe")
+    is_main_line: Mapped[bool] = mapped_column(default=False)
+    main_line_tier: Mapped[str] = mapped_column(String(16), default="rotation")
+    confirm_state: Mapped[str] = mapped_column(String(16), default="pending")
+    exit_state: Mapped[str] = mapped_column(String(16), default="normal")
+    rules_json: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    rule_fail_reasons: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source_tag: Mapped[str] = mapped_column(String(16), default="auto")
 
 
 class ThemeLeaderDaily(Base):
@@ -177,6 +184,8 @@ class BacktestTrade(Base):
     holding_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     trade_mode: Mapped[str] = mapped_column(String(32), default="板块龙头个股")
     human_reason: Mapped[str] = mapped_column(Text, default="")
+    entry_scores: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    exit_scores: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 
 
 class BacktestMetric(Base):

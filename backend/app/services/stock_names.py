@@ -1,31 +1,14 @@
-"""聚宽证券名称解析（回测/入库展示用）。"""
+"""证券名称解析（Tushare stock_basic）。"""
 
 from functools import lru_cache
 from typing import Optional
 
-from app.config import settings
-
-
 @lru_cache(maxsize=1)
 def _load_name_map() -> dict[str, str]:
-    if settings.use_demo_data():
-        return {}
     try:
-        provider = settings.resolved_live_provider()
-        if provider == "tushare":
-            from app.adapters.tushare_adapter import load_stock_name_map
+        from app.adapters.tushare_adapter import load_stock_name_map
 
-            return load_stock_name_map()
-
-        from app.adapters.jqdata_adapter import _ensure_auth
-        from app.adapters.rate_limiter import jqdata_limiter
-
-        _ensure_auth()
-        jqdata_limiter.acquire_sync()
-        import jqdatasdk as jq
-
-        df = jq.get_all_securities(types=["stock"])
-        return {str(code): str(row["display_name"]) for code, row in df.iterrows()}
+        return load_stock_name_map()
     except Exception:
         return {}
 

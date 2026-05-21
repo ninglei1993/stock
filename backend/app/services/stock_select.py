@@ -20,8 +20,6 @@ def limit_stocks_for_ingest(
     name = adapter.__class__.__name__
     if name == "TushareAdapter":
         ranked = _rank_tushare(adapter, stock_codes, trade_date)
-    elif name == "JQDataAdapter":
-        ranked = _rank_jq(adapter, stock_codes, trade_date)
     else:
         ranked = _rank_via_quotes(adapter, stock_codes, trade_date)
 
@@ -69,27 +67,6 @@ def _rank_tushare(adapter, stock_codes: list[str], trade_date: date) -> list[str
 
     rows.sort(key=lambda x: _sort_key(x[1], x[2], x[3]), reverse=True)
     ranked = [r[0] for r in rows]
-    seen = set(ranked)
-    for code in stock_codes:
-        if code not in seen:
-            ranked.append(code)
-    return ranked
-
-
-def _rank_jq(adapter, stock_codes: list[str], trade_date: date) -> list[str]:
-    quotes = adapter.get_stock_quotes(
-        stock_codes,
-        trade_date,
-        price_lookback_days=1,
-        skip_flows=True,
-    )
-    if not quotes:
-        return stock_codes[:]
-    quotes.sort(
-        key=lambda q: _sort_key(q.pct_change, q.money, q.limit_up_streak),
-        reverse=True,
-    )
-    ranked = [q.stock_code for q in quotes]
     seen = set(ranked)
     for code in stock_codes:
         if code not in seen:

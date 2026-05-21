@@ -34,6 +34,8 @@ services:
       INGEST_CONCEPT_FILTER: ${INGEST_CONCEPT_FILTER:-}
       INGEST_MAX_STOCKS_PER_CONCEPT: ${INGEST_MAX_STOCKS_PER_CONCEPT:-0}
       SCAN_VOLATILE_STORAGE: ${SCAN_VOLATILE_STORAGE:-false}
+      DATA_DIR: /data
+      MARKET_CACHE_ENABLED: ${MARKET_CACHE_ENABLED:-true}
       JQDATA_DATA_START: ${JQDATA_DATA_START:-2025-02-06}
       JQDATA_DATA_END: ${JQDATA_DATA_END:-2026-02-13}
     depends_on:
@@ -41,6 +43,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
+      - ./data:/data
 
   web:
     build: ./frontend

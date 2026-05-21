@@ -25,6 +25,9 @@ class VolatileTodayBuffer:
     stocks: list[Any] = field(default_factory=list)
     leaders_by_code: dict[str, Any] = field(default_factory=dict)
     scores_by_date: dict[date, list[Any]] = field(default_factory=dict)
+    sector_rows: list[Any] = field(default_factory=list)
+    flow_rows: list[Any] = field(default_factory=list)
+    leader_rows: list[Any] = field(default_factory=list)
 
     def reset(self, td: date) -> None:
         self.trade_date = td
@@ -34,6 +37,9 @@ class VolatileTodayBuffer:
         self.stocks.clear()
         self.leaders_by_code.clear()
         self.scores_by_date.clear()
+        self.sector_rows.clear()
+        self.flow_rows.clear()
+        self.leader_rows.clear()
 
 
 @dataclass

@@ -6,7 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.factory import get_adapter
 from app.config import settings
-from app.adapters.base import StockQuote
+from app.services.storage_mode import persist_scan_to_postgres, uses_scan_memory_buffer
+from app.adapters.base import SectorQuote, StockQuote
 from app.models.tables import (
     MarketEnvDaily,
     SectorDaily,
@@ -28,6 +29,8 @@ from app.utils.timing_log import log_elapsed
 
 import logging
 
+_LOG_INFO = logging.INFO
+
 logger = logging.getLogger(__name__)
 
 
@@ -42,8 +45,9 @@ class IngestionService:
         trade_date: date,
         max_concepts: Optional[int] = None,
         on_progress: Optional[Callable[[int, int, str], None]] = None,
+        skip_market_env: bool = False,
     ) -> None:
-        with log_elapsed("拉取同花顺概念板块列表", logger_obj=logger):
+        with log_elapsed("拉取同花顺概念板块列表", logger_obj=logger, level=_LOG_INFO):
             all_concepts = self.adapter.list_concepts()
         concepts = select_concepts_for_ingest(
             all_concepts,
@@ -55,9 +59,7 @@ class IngestionService:
                 raise RuntimeError(
                     "未勾选任何扫描板块：请在仪表盘「扫描板块」中至少勾选一个概念后再扫描"
                 )
-            raise RuntimeError(
-                f"未匹配到概念（筛选词: {settings.ingest_concept_filter or '无'}）"
-            )
+            raise RuntimeError("概念列表为空，无法执行扫描")
 
         tracker = get_tracker()
         if tracker is None:
@@ -72,17 +74,16 @@ class IngestionService:
         max_stocks_cfg = effective_max_stocks_per_concept()
         logger.info(
             "[数据] ingest_day 开始 trade_date=%s concepts=%d adapter=%s "
-            "filter=%r max_stocks_per_concept=%d flow_lookback=%d price_lookback=%d volatile_storage=%s",
+            "max_stocks_per_concept=%d flow_lookback=%d price_lookback=%d volatile_storage=%s",
             trade_date,
             len(concepts),
             self.adapter.__class__.__name__,
-            settings.ingest_concept_filter or "(none)",
             max_stocks_cfg,
             settings.ingest_flow_lookback_days,
             settings.ingest_price_lookback_days,
-            settings.scan_volatile_storage,
+            uses_scan_memory_buffer(),
         )
-        if settings.scan_volatile_storage:
+        if uses_scan_memory_buffer():
             from app.services.scan_context import get_allowed_trade_days
 
             allowed = get_allowed_trade_days()
@@ -99,73 +100,64 @@ class IngestionService:
         if on_progress:
             on_progress(0, concept_total, "大盘环境与沪深300")
 
-        env_t0 = tracker.start_phase(
-            "market_env",
-            "大盘环境",
-            "拉取沪深300近几日走势，并统计全市场涨跌家数、涨停家数（用于环境得分）",
-        )
-        from app.services.scan_context import get_allowed_trade_days
+        if not skip_market_env:
+            env_t0 = tracker.start_phase(
+                "market_env",
+                "大盘环境",
+                "拉取沪深300近几日走势，并统计全市场涨跌家数、涨停家数（用于环境得分）",
+            )
+            from app.services.scan_context import get_allowed_trade_days
 
-        allowed = get_allowed_trade_days()
-        if allowed:
-            prior = [d for d in allowed if d <= trade_date]
-            index_start = prior[max(0, len(prior) - 6)] if prior else trade_date
-        else:
-            index_start = trade_date - timedelta(days=5)
-        with log_elapsed("大盘环境 index_bars+market_breadth", logger_obj=logger):
-            index_bars = self.adapter.get_index_bars(
-                "000300.XSHG",
-                index_start,
-                trade_date,
-            )
-            index_pct = index_bars[-1].pct_change if index_bars else 0.0
-            breadth = self.adapter.get_market_breadth(trade_date)
-            from app.services.risk import RiskModule
-
-            env = RiskModule().compute_env(
-                breadth.limit_up_count, breadth.up_down_ratio, index_pct
-            )
-            env_row = MarketEnvDaily(
-                trade_date=trade_date,
-                env_score=env.env_score,
-                limit_up_count=env.limit_up_count,
-                up_down_ratio=env.up_down_ratio,
-                index_pct=env.index_pct,
-                conclusion=env.conclusion,
-                can_long=env.can_long,
-            )
-            if settings.scan_volatile_storage:
-                buf = get_today_buffer()
-                if buf is None:
-                    raise RuntimeError("volatile buffer 未初始化")
-                buf.market_env = env_row
-                logger.info(
-                    "[数据] market_env_daily 仅存内存 volatile env_score=%.1f limit_up=%d",
-                    env.env_score,
-                    env.limit_up_count,
-                )
+            allowed = get_allowed_trade_days()
+            if allowed:
+                prior = [d for d in allowed if d <= trade_date]
+                index_start = prior[max(0, len(prior) - 6)] if prior else trade_date
             else:
-                await self.session.merge(env_row)
-                logger.info(
-                    "[数据] market_env_daily 已写入 env_score=%.1f limit_up=%d",
-                    env.env_score,
-                    env.limit_up_count,
+                index_start = trade_date - timedelta(days=5)
+            with log_elapsed("大盘环境", logger_obj=logger, level=_LOG_INFO):
+                index_bars = self.adapter.get_index_bars(
+                    "000300.XSHG",
+                    index_start,
+                    trade_date,
                 )
-        tracker.end_phase(
-            "market_env",
-            "大盘环境",
-            f"{trade_date} 沪深300与全市场广度已就绪",
-            env_t0,
-            extra=f"涨停{env.limit_up_count}家 环境分{env.env_score:.0f}",
-        )
+                index_pct = index_bars[-1].pct_change if index_bars else 0.0
+                breadth = self.adapter.get_market_breadth(trade_date)
+                from app.services.risk import RiskModule
+
+                env = RiskModule().compute_env(
+                    breadth.limit_up_count, breadth.up_down_ratio, index_pct
+                )
+                env_row = MarketEnvDaily(
+                    trade_date=trade_date,
+                    env_score=env.env_score,
+                    limit_up_count=env.limit_up_count,
+                    up_down_ratio=env.up_down_ratio,
+                    index_pct=env.index_pct,
+                    conclusion=env.conclusion,
+                    can_long=env.can_long,
+                )
+                if uses_scan_memory_buffer():
+                    buf = get_today_buffer()
+                    if buf is None:
+                        raise RuntimeError("volatile buffer 未初始化")
+                    buf.market_env = env_row
+                else:
+                    await self.session.merge(env_row)
+            tracker.end_phase(
+                "market_env",
+                "大盘环境",
+                f"{trade_date} 沪深300与全市场广度已就绪",
+                env_t0,
+                extra=f"涨停{env.limit_up_count}家 环境分{env.env_score:.0f}",
+            )
 
         with log_elapsed(
-            ("清理当日旧行情数据（已跳过volatile）")
-            if settings.scan_volatile_storage
+            ("清理当日旧行情数据（已跳过内存/文件模式）")
+            if uses_scan_memory_buffer()
             else "清理当日旧行情数据",
             logger_obj=logger,
         ):
-            if not settings.scan_volatile_storage:
+            if persist_scan_to_postgres():
                 await self.session.execute(
                     delete(SectorDaily).where(SectorDaily.trade_date == trade_date)
                 )
@@ -179,7 +171,7 @@ class IngestionService:
                     delete(ThemeLeaderDaily).where(ThemeLeaderDaily.trade_date == trade_date)
                 )
             else:
-                logger.info("[数据] volatile 模式：跳过 PostgreSQL 当日 DELETE")
+                logger.debug("[数据] 跳过 PostgreSQL 当日 DELETE")
 
         prefetch_fn = getattr(self.adapter, "prefetch_shared_market_data", None)
         if prefetch_fn is not None:
@@ -193,6 +185,9 @@ class IngestionService:
                 settings.ingest_flow_lookback_days,
                 settings.ingest_price_lookback_days,
             )
+            from app.services.scan_context import set_market_cache_stats
+
+            set_market_cache_stats(stats)
             tracker.end_phase(
                 "prefetch",
                 "预取全市场公有数据",
@@ -200,19 +195,6 @@ class IngestionService:
                 pf_t0,
                 extra=f"{stats.get('trade_days', 0)}个交易日",
             )
-
-        if self.adapter.__class__.__name__ == "DemoAdapter":
-            quotes = self.adapter.get_sector_quotes(trade_date, codes)
-            for q in quotes:
-                net, inflow_days = self.aggregator.aggregate_flow(q.sector_code, trade_date)
-                stocks = self.adapter.get_concept_stocks(q.sector_code, trade_date)
-                stock_quotes = self.adapter.get_stock_quotes(stocks, trade_date, q.sector_code)
-                await self._persist_sector_bundle(trade_date, q, net, inflow_days, stock_quotes)
-            if settings.scan_volatile_storage:
-                logger.info("[数据] Demo volatile：跳过 flush")
-            else:
-                await self.session.flush()
-            return
 
         # 实盘源：每个概念只拉一次成分股 + 从缓存筛行情/资金流
         total = len(codes)
@@ -243,18 +225,33 @@ class IngestionService:
                         stocks = limit_stocks_for_ingest(
                             self.adapter, stocks, trade_date, max_stocks
                         )
-                    logger.info(
+                    logger.debug(
                         "[数据] 成分股限制 %d -> %d (max=%d)",
                         before,
                         len(stocks),
                         max_stocks,
                     )
-                logger.info("[数据] 待分析成分股 count=%d", len(stocks))
+                logger.debug("[数据] 待分析成分股 count=%d", len(stocks))
                 if not stocks:
                     with log_elapsed("板块聚合+入库(空成分股)", logger_obj=logger):
-                        q = self.aggregator.aggregate_sector_from_quotes(
-                            code, names[code], []
-                        )
+                        # 成分股接口偶发为空时，尽量回退到板块指数日线，避免整条链路全 0。
+                        q = self.aggregator.aggregate_sector_from_quotes(code, names[code], [])
+                        idx_fn = getattr(self.adapter, "get_concept_index_quote", None)
+                        idx = idx_fn(code, trade_date) if callable(idx_fn) else None
+                        if idx and float(idx.get("close", 0) or 0) > 0:
+                            q = SectorQuote(
+                                sector_code=code,
+                                sector_name=names[code],
+                                pct_change=float(idx.get("pct_change", 0) or 0.0),
+                                open=float(idx.get("open", 0) or 0.0),
+                                close=float(idx.get("close", 0) or 0.0),
+                                high=float(idx.get("high", 0) or 0.0),
+                                low=float(idx.get("low", 0) or 0.0),
+                                volume=float(idx.get("volume", 0) or 0.0),
+                                money=float(idx.get("money", 0) or 0.0),
+                                # 标记为“有指数快照”，避免被误判为完全空日
+                                total_count=1,
+                            )
                         await self._persist_sector_bundle(
                             trade_date, q, 0.0, 0, []
                         )
@@ -296,13 +293,12 @@ class IngestionService:
                     await self._persist_sector_bundle(
                         trade_date, q, net, inflow_days, stock_quotes
                     )
-                logger.info(
-                    "[数据] 概念入库完成 %s pct=%.2f limit_up=%d stocks_saved=%d net_inflow=%.0f",
+                logger.debug(
+                    "[数据] 概念完成 %s pct=%.2f limit_up=%d stocks=%d",
                     label,
                     q.pct_change,
                     q.limit_up_count,
                     len(stock_quotes),
-                    net,
                 )
             done += 1
             if on_progress:
@@ -322,8 +318,8 @@ class IngestionService:
             "将内存中的板块/个股数据提交到数据库（volatile 模式则跳过）",
         )
         with log_elapsed("ingest_day flush", logger_obj=logger):
-            if settings.scan_volatile_storage:
-                logger.info("[数据] volatile：跳过 Session.flush（无 PostgreSQL 写入）")
+            if uses_scan_memory_buffer():
+                logger.debug("[数据] 跳过 Session.flush")
             else:
                 await self.session.flush()
         tracker.end_phase(
@@ -342,7 +338,7 @@ class IngestionService:
         inflow_days: int,
         stock_quotes: list[StockQuote],
     ) -> None:
-        if settings.scan_volatile_storage:
+        if uses_scan_memory_buffer():
             await self._persist_sector_bundle_volatile(
                 trade_date, q, net, inflow_days, stock_quotes
             )
@@ -376,7 +372,7 @@ class IngestionService:
             )
         )
 
-        if not stock_quotes and self.adapter.__class__.__name__ != "DemoAdapter":
+        if not stock_quotes:
             stocks = self.adapter.get_concept_stocks(q.sector_code, trade_date)
             stock_quotes = self.adapter.get_stock_quotes(stocks, trade_date, q.sector_code)
 
@@ -426,13 +422,13 @@ class IngestionService:
             raise RuntimeError("volatile buffer 缺失，无法写入板块快照")
 
         sq_for_leader = list(stock_quotes)
-        if not stock_quotes and self.adapter.__class__.__name__ != "DemoAdapter":
+        if not stock_quotes:
             stocks_reload = self.adapter.get_concept_stocks(q.sector_code, trade_date)
             sq_for_leader = list(
                 self.adapter.get_stock_quotes(stocks_reload, trade_date, q.sector_code)
             )
 
-        buf.sectors_by_code[q.sector_code] = SectorDaily(
+        sector_row = SectorDaily(
             trade_date=trade_date,
             sector_code=q.sector_code,
             sector_name=q.sector_name,
@@ -449,15 +445,29 @@ class IngestionService:
             total_count=q.total_count,
             blow_up_rate=q.blow_up_rate,
         )
-        buf.flows_by_code[q.sector_code] = SectorFlowDaily(
+        buf.sectors_by_code[q.sector_code] = sector_row
+        buf.sector_rows[:] = [
+            r
+            for r in buf.sector_rows
+            if not (r.trade_date == trade_date and r.sector_code == q.sector_code)
+        ]
+        buf.sector_rows.append(sector_row)
+        flow_row = SectorFlowDaily(
             trade_date=trade_date,
             sector_code=q.sector_code,
             net_inflow_main=net,
             inflow_days=inflow_days,
         )
+        buf.flows_by_code[q.sector_code] = flow_row
+        buf.flow_rows[:] = [
+            r
+            for r in buf.flow_rows
+            if not (r.trade_date == trade_date and r.sector_code == q.sector_code)
+        ]
+        buf.flow_rows.append(flow_row)
         leader = self._pick_leader(sq_for_leader)
         if leader:
-            buf.leaders_by_code[q.sector_code] = ThemeLeaderDaily(
+            leader_row = ThemeLeaderDaily(
                 trade_date=trade_date,
                 sector_code=q.sector_code,
                 stock_code=leader.stock_code,
@@ -466,8 +476,20 @@ class IngestionService:
                 pct_change=leader.pct_change,
                 money=leader.money,
             )
+            buf.leaders_by_code[q.sector_code] = leader_row
+            buf.leader_rows[:] = [
+                r
+                for r in buf.leader_rows
+                if not (r.trade_date == trade_date and r.sector_code == q.sector_code)
+            ]
+            buf.leader_rows.append(leader_row)
         else:
             buf.leaders_by_code.pop(q.sector_code, None)
+            buf.leader_rows[:] = [
+                r
+                for r in buf.leader_rows
+                if not (r.trade_date == trade_date and r.sector_code == q.sector_code)
+            ]
 
         buf.stocks[:] = [
             r

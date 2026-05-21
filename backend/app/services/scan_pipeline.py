@@ -27,7 +27,7 @@ SCAN_PLAN_LINES: list[tuple[str, str]] = [
     ("7", "从已缓存的全市场资金流表中，筛出本板块成分股的多日主力净流入"),
     ("8", "从已缓存的全市场日线+涨跌停表中，计算成分股多日行情与连板"),
     ("9", "聚合板块涨幅/涨停数/资金等，写入数据库或内存快照"),
-    ("10", "五维评分、阶段判定、预警对比（主要读库+内存，不再调行情接口）"),
+    ("10", "A策略主线规则评估、预警对比（主要读库+内存，不再调行情接口）"),
 ]
 
 
@@ -54,18 +54,17 @@ class ScanPipelineTracker:
 
     def log_plan(self) -> None:
         logger.info(
-            "[流程] ========== 收盘扫描开始 交易日=%s 数据源=%s 计划扫描板块数=%s ==========",
+            "[流程] 收盘扫描开始 交易日=%s 数据源=%s 板块数=%s",
             self.trade_date,
             self.adapter,
             self.concept_count or "待计算",
         )
-        logger.info("[流程] 整体步骤一览（共 %d 步）：", len(SCAN_PLAN_LINES))
-        for num, desc in SCAN_PLAN_LINES:
-            logger.info("[流程]   步骤%s：%s", num, desc)
-        logger.info("[流程] ----------------------------------------")
+        if logger.isEnabledFor(logging.DEBUG):
+            for num, desc in SCAN_PLAN_LINES:
+                logger.debug("[流程]   步骤%s：%s", num, desc)
 
     def start_phase(self, key: str, title: str, plain: str) -> float:
-        logger.info("[流程] ▶ 开始【%s】— %s", title, plain)
+        logger.debug("[流程] ▶ 开始【%s】— %s", title, plain)
         return time.monotonic()
 
     def end_phase(

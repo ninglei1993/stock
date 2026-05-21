@@ -41,18 +41,23 @@ export interface SectorScore {
   is_filtered?: boolean;
   filter_reason?: string | null;
   is_scored?: boolean;
+  is_main_line?: boolean;
+  main_line_tier?: string;
+  confirm_state?: string;
+  exit_state?: string;
+  source_tag?: string;
+  rules?: Array<Record<string, unknown>>;
+  rule_fail_reasons?: string[];
 }
 
 export interface SectorList {
   trade_date: string | null;
   universe_total: number;
   sectors_scored: number;
-  demo_mode: boolean;
   is_live_data?: boolean;
   data_source?: string;
   data_source_label?: string;
   data_source_short?: string;
-  jq_configured?: boolean;
   sectors: SectorScore[];
 }
 
@@ -71,26 +76,6 @@ export interface TaskStatus {
   error?: string | null;
 }
 
-export interface JqDataRange {
-  start: string;
-  end: string;
-  latest_trade_day: string;
-  label: string;
-}
-
-export interface DataSourceOption {
-  id: string;
-  label: string;
-  description: string;
-  configured: boolean;
-  active: boolean;
-}
-
-export interface DataSourcesResponse {
-  current: string;
-  active_adapter: string;
-  options: DataSourceOption[];
-}
 
 export interface ConceptItem {
   sector_code: string;
@@ -105,12 +90,9 @@ export interface ScanSectorsResponse {
 
 export interface SystemStatus {
   adapter: string;
-  demo_mode: boolean;
   is_live_data: boolean;
   data_source_label: string;
   data_source_short: string;
-  data_source?: string;
-  jq_configured: boolean;
   tushare_configured?: boolean;
   universe_total: number;
   ingest_max_concepts: number;
@@ -121,7 +103,6 @@ export interface SystemStatus {
   selected_sector_count?: number;
   scan_volatile_storage?: boolean;
   scan_task: TaskStatus;
-  jq_data_range?: JqDataRange | null;
   default_scan_date?: string | null;
   default_scan_start?: string | null;
   default_scan_end?: string | null;
@@ -131,6 +112,13 @@ export interface Dashboard {
   trade_date: string | null;
   market_env: MarketEnv | null;
   top_sectors: SectorScore[];
+  market_overview?: {
+    total_turnover_yi: number;
+    up_count: number;
+    down_count: number;
+    flat_count: number;
+    limit_up_count: number;
+  } | null;
 }
 
 export interface Alert {
@@ -143,12 +131,13 @@ export interface Alert {
   created_at: string;
 }
 
-export interface ScoreDimension {
+export interface RuleEval {
   key: string;
   label: string;
-  weight_pct: number;
-  score: number;
-  description: string;
+  passed: boolean;
+  threshold?: string;
+  current?: unknown;
+  source?: string;
 }
 
 export interface StockPctDay {
@@ -163,8 +152,13 @@ export interface SectorDetail {
   pct_display_days?: string[];
   stage: string;
   total_score: number;
-  scores: Record<string, number>;
-  score_dimensions?: ScoreDimension[];
+  is_main_line?: boolean;
+  main_line_tier?: string;
+  confirm_state?: string;
+  exit_state?: string;
+  source_tag?: string;
+  rules?: RuleEval[];
+  rule_fail_reasons?: string[];
   limit_up_count: number;
   big_yang_count: number;
   net_inflow_main: number;
@@ -192,6 +186,7 @@ export interface SectorDetail {
     net_inflow_wan: number;
     net_inflow_yi: number;
   }>;
+  data_missing_items?: string[];
 }
 
 export interface BacktestRun {
@@ -200,6 +195,7 @@ export interface BacktestRun {
   strategy_id: string;
   start_date: string;
   end_date: string;
+  params?: Record<string, unknown>;
   progress: number;
   total_days: number;
   error_message?: string;
@@ -214,6 +210,54 @@ export interface BacktestReport {
   stage_win_rates: Record<string, number>;
   trade_mode_note?: string;
   strategy_name_cn?: string;
+}
+
+export interface ScoreSnapshot {
+  total: number;
+  persistence: number;
+  capital: number;
+  breadth: number;
+  leader: number;
+  relative: number;
+  stage: string;
+  is_main_line?: boolean;
+  main_line_tier?: string;
+}
+
+export interface BacktestSectorCandidate {
+  sector_code: string;
+  sector_name: string;
+  rank: number;
+  total_score: number;
+  stage: string;
+  persistence_score: number;
+  capital_score: number;
+  breadth_score: number;
+  leader_score: number;
+  relative_score: number;
+  is_main_line?: boolean;
+  main_line_tier?: string;
+  confirm_state?: string;
+  exit_state?: string;
+  source_tag?: string;
+  rules?: Array<Record<string, unknown>>;
+  rule_fail_reasons?: string[];
+}
+
+export interface BacktestSectorCandidatesResponse {
+  trade_date: string | null;
+  sectors: BacktestSectorCandidate[];
+}
+
+export interface AStrategyManualInput {
+  trade_date: string;
+  sector_code: string;
+  values: Record<string, unknown>;
+}
+
+export interface AStrategyMainLineList {
+  trade_date: string | null;
+  sectors: SectorScore[];
 }
 
 export interface BacktestTrade {
@@ -237,17 +281,13 @@ export interface BacktestTrade {
   entry_timing_cn?: string;
   exit_timing_cn?: string;
   human_reason: string;
+  entry_scores?: ScoreSnapshot | null;
+  exit_scores?: ScoreSnapshot | null;
 }
 
 export const api = {
   health: () => fetchJson<{ status: string; adapter?: string; universe_total?: number }>("/health"),
   systemStatus: () => fetchJson<SystemStatus>("/system/status"),
-  dataSources: () => fetchJson<DataSourcesResponse>("/system/data-sources"),
-  setDataSource: (source: string) =>
-    fetchJson<{ message: string; adapter: string }>("/system/data-source", {
-      method: "POST",
-      body: JSON.stringify({ source }),
-    }),
   getScanSectors: () => fetchJson<ScanSectorsResponse>("/system/scan-sectors"),
   setScanSectors: (body: {
     use_explicit_selection: boolean;
@@ -297,16 +337,20 @@ export const api = {
       trade_days?: string[];
       status?: string;
       message?: string;
-      jq_data_range?: string;
     }>(`/scan/latest${q ? `?${q}` : ""}`, { method: "POST" });
   },
   alerts: (tradeDate?: string) =>
     fetchJson<Alert[]>(`/alerts${tradeDate ? `?trade_date=${tradeDate}` : ""}`),
-  sector: (code: string, tradeDate?: string) =>
-    fetchJson<SectorDetail>(
-      `/sectors/${code}${tradeDate ? `?trade_date=${tradeDate}` : ""}`
-    ),
+  sector: (code: string, tradeDate?: string, stocksLimit?: number) => {
+    const params = new URLSearchParams();
+    if (tradeDate) params.set("trade_date", tradeDate);
+    if (stocksLimit !== undefined) params.set("stocks_limit", String(stocksLimit));
+    const q = params.toString();
+    return fetchJson<SectorDetail>(`/sectors/${code}${q ? `?${q}` : ""}`);
+  },
   review: (date: string) => fetchJson<{ trade_date: string; sectors: unknown[] }>(`/review/${date}`),
+  backtestSectorCandidates: () =>
+    fetchJson<BacktestSectorCandidatesResponse>("/backtest/sector-candidates"),
   createBacktest: (body: {
     strategy_id: string;
     start_date: string;
@@ -321,4 +365,31 @@ export const api = {
   getBacktest: (id: number) => fetchJson<BacktestRun>(`/backtest/runs/${id}`),
   backtestReport: (id: number) => fetchJson<BacktestReport>(`/backtest/runs/${id}/report`),
   backtestTrades: (id: number) => fetchJson<BacktestTrade[]>(`/backtest/runs/${id}/trades`),
+  aStrategyMainLines: (tradeDate?: string, includeRejected = true) => {
+    const params = new URLSearchParams();
+    if (tradeDate) params.set("trade_date", tradeDate);
+    params.set("include_rejected", includeRejected ? "true" : "false");
+    return fetchJson<AStrategyMainLineList>(
+      `/a-strategy/main-lines?${params.toString()}`
+    );
+  },
+  aStrategyManualInputs: (tradeDate: string) =>
+    fetchJson<AStrategyManualInput[]>(`/a-strategy/manual-inputs?trade_date=${tradeDate}`),
+  setAStrategyManualInput: (body: {
+    trade_date: string;
+    sector_code: string;
+    auction_passed?: boolean;
+    negative_news?: boolean;
+    northbound_5d_yi?: number;
+    notes?: string;
+  }) =>
+    fetchJson<AStrategyManualInput>("/a-strategy/manual-inputs", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  deleteAStrategyManualInput: (tradeDate: string, sectorCode: string) =>
+    fetchJson<{ deleted: boolean }>(
+      `/a-strategy/manual-inputs/${encodeURIComponent(sectorCode)}?trade_date=${tradeDate}`,
+      { method: "DELETE" }
+    ),
 };

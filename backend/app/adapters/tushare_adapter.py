@@ -25,6 +25,8 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 _pro = None
+_TS_CALL_MAX_RETRIES = 2
+_TS_CALL_RETRY_BASE_SECONDS = 1.5
 
 
 def reset_tushare_client() -> None:
@@ -73,27 +75,69 @@ class TushareAdapter(MarketDataAdapter):
         _ensure_pro()
 
     def _call(self, fn_name: str, *, plain: str = "", **kwargs) -> pd.DataFrame:
-        tushare_limiter.acquire_sync()
-        pro = _ensure_pro()
-        fn = getattr(pro, fn_name)
         if plain:
-            logger.info("[流程] %s", plain)
-        logger.info("[数据] Tushare %s 请求 %s", fn_name, kwargs)
-        t0 = time.monotonic()
-        df = fn(**kwargs)
-        elapsed = time.monotonic() - t0
-        if df is None:
-            logger.warning("[数据] Tushare %s 返回 None 耗时=%.2fs", fn_name, elapsed)
-            return pd.DataFrame()
-        logger.info(
-            "[数据] Tushare %s 完成 耗时=%.2fs rows=%d",
-            fn_name,
-            elapsed,
-            len(df),
-        )
-        if not df.empty and logger.isEnabledFor(logging.DEBUG):
-            logger.debug("Tushare %s sample:\n%s", fn_name, df.head(2).to_string())
-        return df
+            logger.debug("[流程] %s", plain)
+        last_exc: Exception | None = None
+        for attempt in range(1, _TS_CALL_MAX_RETRIES + 2):
+            tushare_limiter.acquire_sync()
+            pro = _ensure_pro()
+            fn = getattr(pro, fn_name)
+            logger.debug("[数据] Tushare %s 请求 %s attempt=%d", fn_name, kwargs, attempt)
+            t0 = time.monotonic()
+            try:
+                df = fn(**kwargs)
+                elapsed = time.monotonic() - t0
+                if df is None:
+                    logger.warning("[数据] Tushare %s 返回 None 耗时=%.2fs", fn_name, elapsed)
+                    return pd.DataFrame()
+                logger.info(
+                    "[数据] Tushare %s API 完成 耗时=%.2fs rows=%d",
+                    fn_name,
+                    elapsed,
+                    len(df),
+                )
+                if not df.empty and logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("Tushare %s sample:\n%s", fn_name, df.head(2).to_string())
+                return df
+            except Exception as exc:
+                last_exc = exc
+                elapsed = time.monotonic() - t0
+                msg = str(exc).lower()
+                retryable = any(
+                    key in msg
+                    for key in (
+                        "timed out",
+                        "timeout",
+                        "connection aborted",
+                        "connection reset",
+                        "max retries exceeded",
+                        "temporary failure",
+                    )
+                )
+                if retryable and attempt <= _TS_CALL_MAX_RETRIES:
+                    sleep_s = _TS_CALL_RETRY_BASE_SECONDS * attempt
+                    logger.warning(
+                        "[数据] Tushare %s 网络异常（第 %d/%d 次）耗时=%.2fs: %s；%.1fs 后重试",
+                        fn_name,
+                        attempt,
+                        _TS_CALL_MAX_RETRIES + 1,
+                        elapsed,
+                        exc,
+                        sleep_s,
+                    )
+                    time.sleep(sleep_s)
+                    continue
+                if retryable:
+                    logger.error(
+                        "[数据] Tushare %s 连续网络异常，返回空结果并继续流程: %s",
+                        fn_name,
+                        exc,
+                    )
+                    return pd.DataFrame()
+                raise
+        if last_exc is not None:
+            raise last_exc
+        return pd.DataFrame()
 
     def get_trade_days(self, start_date: date, end_date: date) -> list[date]:
         cache_key = (_fmt(start_date), _fmt(end_date))
@@ -125,9 +169,22 @@ class TushareAdapter(MarketDataAdapter):
             logger.debug("[数据] list_concepts 命中缓存 count=%d", len(TushareAdapter._concepts_cache))
             return TushareAdapter._concepts_cache
         logger.info("[数据] list_concepts 开始 ths_index")
-        df = self._call("ths_index", exchange="A", type="N")
-        if df.empty:
-            df = self._call("ths_index")
+        frames: list[pd.DataFrame] = []
+        for kwargs in (
+            {"exchange": "A", "type": "N"},
+            {"exchange": "A", "type": "S"},
+            {},
+        ):
+            try:
+                part = self._call("ths_index", **kwargs)
+            except Exception:
+                part = pd.DataFrame()
+            if part is not None and not part.empty:
+                frames.append(part)
+        if frames:
+            df = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["ts_code"])
+        else:
+            df = pd.DataFrame()
         concepts: list[ConceptInfo] = []
         for _, row in df.iterrows():
             code = str(row.get("ts_code", ""))
@@ -138,6 +195,130 @@ class TushareAdapter(MarketDataAdapter):
         logger.info("TushareAdapter loaded %d ths concepts", len(concepts))
         return concepts
 
+    def get_concept_index_quote(self, concept_code: str, trade_date: date) -> dict[str, float] | None:
+        """
+        获取同花顺概念/行业板块指数在指定交易日的 OHLC 与涨跌幅（ths_daily）。
+
+        若接口不可用/无权限/无数据，返回 None（上层应回退到“成分股聚合”口径）。
+        """
+        try:
+            df = self._call(
+                "ths_daily",
+                plain=f"获取板块指数 {concept_code} 在 {trade_date} 的日线点位（ths_daily）",
+                ts_code=concept_code,
+                trade_date=_fmt(trade_date),
+                fields="ts_code,trade_date,open,close,high,low,pre_close,pct_change,vol,amount",
+            )
+            if df is None or df.empty:
+                # 部分网关不支持 vol/amount 字段，回退到基础字段确保 close/pct 可用。
+                df = self._call(
+                    "ths_daily",
+                    plain=f"获取板块指数 {concept_code} 在 {trade_date} 的日线点位（ths_daily，基础字段回退）",
+                    ts_code=concept_code,
+                    trade_date=_fmt(trade_date),
+                    fields="ts_code,trade_date,open,close,high,low,pre_close,pct_change",
+                )
+        except Exception as exc:
+            logger.debug(
+                "[数据] ths_daily 不可用 concept=%s date=%s: %s",
+                concept_code,
+                trade_date,
+                exc,
+            )
+            return None
+        if df is None or df.empty:
+            return None
+        row = df.iloc[-1]
+        try:
+            out = {
+                "open": float(row.get("open", 0) or 0.0),
+                "close": float(row.get("close", 0) or 0.0),
+                "high": float(row.get("high", 0) or 0.0),
+                "low": float(row.get("low", 0) or 0.0),
+            }
+            pct = row.get("pct_change", None)
+            if pct is None or pd.isna(pct):
+                pre = float(row.get("pre_close", out["close"]) or out["close"])
+                out["pct_change"] = float((out["close"] / pre - 1) * 100.0) if pre else 0.0
+            else:
+                out["pct_change"] = float(pct)
+            if out["close"] <= 0:
+                return None
+            return out
+        except Exception as exc:
+            logger.debug(
+                "[数据] ths_daily 解析失败 concept=%s date=%s: %s",
+                concept_code,
+                trade_date,
+                exc,
+            )
+            return None
+
+    def get_concept_index_history(
+        self, concept_code: str, start_date: date, end_date: date
+    ) -> dict[date, dict[str, float]]:
+        """
+        获取同花顺板块指数在区间内的日线（ths_daily），返回 trade_date -> OHLC/pct_change。
+
+        若接口不可用/无权限，返回空 dict（上层应回退到本地聚合口径）。
+        """
+        try:
+            df = self._call(
+                "ths_daily",
+                plain=f"获取板块指数 {concept_code} 区间 {start_date}~{end_date} 日线点位（ths_daily）",
+                ts_code=concept_code,
+                start_date=_fmt(start_date),
+                end_date=_fmt(end_date),
+                fields="ts_code,trade_date,open,close,high,low,pre_close,pct_change,vol,amount",
+            )
+            if df is None or df.empty:
+                # 网关字段不兼容时回退，避免历史序列全空。
+                df = self._call(
+                    "ths_daily",
+                    plain=f"获取板块指数 {concept_code} 区间 {start_date}~{end_date} 日线点位（ths_daily，基础字段回退）",
+                    ts_code=concept_code,
+                    start_date=_fmt(start_date),
+                    end_date=_fmt(end_date),
+                    fields="ts_code,trade_date,open,close,high,low,pre_close,pct_change",
+                )
+        except Exception as exc:
+            logger.debug(
+                "[数据] ths_daily 区间不可用 concept=%s %s~%s: %s",
+                concept_code,
+                start_date,
+                end_date,
+                exc,
+            )
+            return {}
+        if df is None or df.empty:
+            return {}
+        out: dict[date, dict[str, float]] = {}
+        for _, row in df.iterrows():
+            try:
+                td = pd.Timestamp(str(row.get("trade_date"))).date()
+            except Exception:
+                continue
+            try:
+                item = {
+                    "open": float(row.get("open", 0) or 0.0),
+                    "close": float(row.get("close", 0) or 0.0),
+                    "high": float(row.get("high", 0) or 0.0),
+                    "low": float(row.get("low", 0) or 0.0),
+                    "volume": float(row.get("vol", 0) or 0.0),
+                    "money": float(row.get("amount", 0) or 0.0),
+                }
+                pct = row.get("pct_change", None)
+                if pct is None or pd.isna(pct):
+                    pre = float(row.get("pre_close", item["close"]) or item["close"])
+                    item["pct_change"] = float((item["close"] / pre - 1) * 100.0) if pre else 0.0
+                else:
+                    item["pct_change"] = float(pct)
+                if item["close"] > 0:
+                    out[td] = item
+            except Exception:
+                continue
+        return out
+
     def get_concept_stocks(self, concept_code: str, trade_date: date) -> list[str]:
         if concept_code in TushareAdapter._member_cache:
             cached = TushareAdapter._member_cache[concept_code]
@@ -147,50 +328,164 @@ class TushareAdapter(MarketDataAdapter):
                 len(cached),
             )
             return list(cached)
+
+        def _infer_member_col(df: pd.DataFrame) -> str | None:
+            """
+            ths_member 字段在不同网关/版本下可能是 code / con_code / stock_code。
+            必须避免误用概念 ts_code（通常形如 886033.TI），否则成分股全空导致板块指标为 0。
+            """
+            if df is None or df.empty:
+                return None
+            candidates = [c for c in ("con_code", "code", "stock_code") if c in df.columns]
+            # ts_code 很可能是概念自身代码；只有在缺少其它列时才考虑
+            if "ts_code" in df.columns:
+                candidates.append("ts_code")
+            best_col: str | None = None
+            best_score = -1.0
+            for col in candidates:
+                raw_vals = [str(v).strip() for v in df[col].dropna().unique().tolist()]
+                if not raw_vals:
+                    continue
+                sample = raw_vals[:20]
+                # 概念列常见为常量概念码；直接跳过
+                if len(set(sample)) == 1 and sample[0].upper() == str(concept_code).upper():
+                    continue
+                # 概念码后缀 .TI 出现占比过高，认为不是成分股列
+                if sum(1 for v in sample if v.upper().endswith(".TI")) >= max(1, len(sample) // 2):
+                    continue
+                ok = 0
+                for v in sample:
+                    internal = normalize_stock_code(v)
+                    ts = to_ts_code(internal)
+                    if (
+                        len(ts) == 9
+                        and ts[:6].isdigit()
+                        and ts[6] == "."
+                        and ts[7:] in ("SZ", "SH", "BJ")
+                    ):
+                        ok += 1
+                score = ok / max(len(sample), 1)
+                if score > best_score:
+                    best_score = score
+                    best_col = col
+            return best_col
         logger.info(
             "[流程] 拉取概念板块 %s 的成分股列表（ths_member，每板块仅请求一次）",
             concept_code,
         )
-        df = self._call(
-            "ths_member",
-            plain=f"获取概念板块 {concept_code} 的全部成分股代码",
-            ts_code=concept_code,
-        )
+        code_candidates: list[str] = [str(concept_code)]
+        raw = str(concept_code).strip()
+        if raw.upper().endswith(".TI"):
+            bare = raw.split(".")[0]
+            if bare:
+                code_candidates.append(bare)
+        elif raw and "." not in raw:
+            code_candidates.append(f"{raw}.TI")
+        # 去重并保持顺序
+        seen_codes: set[str] = set()
+        code_candidates = [
+            c for c in code_candidates if c and not (c in seen_codes or seen_codes.add(c))
+        ]
+        df = pd.DataFrame()
+        try:
+            for cc in code_candidates:
+                df = self._call(
+                    "ths_member",
+                    plain=f"获取概念板块 {cc} 在 {trade_date} 的成分股代码（ths_member）",
+                    ts_code=cc,
+                    trade_date=_fmt(trade_date),
+                )
+                if df is None or df.empty:
+                    df = self._call(
+                        "ths_member",
+                        plain=f"获取概念板块 {cc} 的全部成分股代码",
+                        ts_code=cc,
+                    )
+                if df is not None and not df.empty:
+                    if cc != concept_code:
+                        logger.info(
+                            "[数据] get_concept_stocks concept=%s 使用候选编码 %s 命中",
+                            concept_code,
+                            cc,
+                        )
+                    break
+        except Exception as exc:
+            logger.warning("[数据] get_concept_stocks 调用失败 concept=%s: %s", concept_code, exc)
+            return []
         if df.empty:
             logger.warning("[数据] get_concept_stocks 无成分 concept=%s", concept_code)
             return []
-        col = "con_code" if "con_code" in df.columns else "code"
+        col = _infer_member_col(df) or ("code" if "code" in df.columns else None)
+        if not col:
+            logger.warning(
+                "[数据] get_concept_stocks 未找到有效成分股字段 concept=%s columns=%s",
+                concept_code,
+                list(df.columns),
+            )
+            return []
         codes = [normalize_stock_code(str(c)) for c in df[col].dropna().unique()]
+        # 兜底过滤：忽略明显的概念编码/异常值
+        codes = [c for c in codes if c and not str(c).upper().endswith(".TI")]
         TushareAdapter._member_cache[concept_code] = codes
-        logger.info("[数据] get_concept_stocks 完成 concept=%s count=%d", concept_code, len(codes))
+        logger.info(
+            "[数据] get_concept_stocks concept=%s col=%s count=%d",
+            concept_code,
+            col,
+            len(codes),
+        )
         return codes
+
+    def _load_market_table_from_disk(self, table: str, trade_date: date) -> pd.DataFrame | None:
+        if not settings.market_cache_enabled:
+            return None
+        from app.services.market_cache import MarketTable, get_market_cache
+
+        kind = MarketTable(table)
+        return get_market_cache().load(kind, trade_date)
+
+    def _save_market_table_to_disk(self, table: str, trade_date: date, df: pd.DataFrame) -> None:
+        if not settings.market_cache_enabled:
+            return
+        from app.services.market_cache import MarketTable, get_market_cache
+
+        store = get_market_cache()
+        store.save(MarketTable(table), trade_date, df)
+        if store.has_day(trade_date):
+            store._register_day(trade_date)
 
     def _daily_market(self, trade_date: date) -> pd.DataFrame:
         key = _fmt(trade_date)
         if key in TushareAdapter._daily_cache:
-            logger.debug(
-                "[数据] daily(%s) 命中缓存，跳过接口（全市场约 %d 行）",
-                key,
-                len(TushareAdapter._daily_cache[key]),
-            )
             return TushareAdapter._daily_cache[key]
-        df = self._call(
-            "daily",
-            plain=f"拉取 {trade_date} 全市场约 5000 只股票日线行情（开高低收、成交额）",
-            trade_date=key,
-        )
+        disk = self._load_market_table_from_disk("daily", trade_date)
+        if disk is not None:
+            if not disk.empty:
+                TushareAdapter._daily_cache[key] = disk
+                return disk
+            logger.warning("[数据] daily 磁盘缓存为空，触发实时重拉 trade_date=%s", trade_date)
+        try:
+            df = self._call(
+                "daily",
+                plain=f"拉取 {trade_date} 全市场约 5000 只股票日线行情（开高低收、成交额）",
+                trade_date=key,
+            )
+        except Exception as exc:
+            logger.warning("[数据] daily(%s) 失败: %s", key, exc)
+            df = pd.DataFrame()
         TushareAdapter._daily_cache[key] = df
+        self._save_market_table_to_disk("daily", trade_date, df)
         return df
 
     def _limit_table(self, trade_date: date) -> pd.DataFrame:
         key = _fmt(trade_date)
         if key in TushareAdapter._limit_cache:
-            logger.debug(
-                "[数据] stk_limit(%s) 命中缓存，跳过接口（%d 行）",
-                key,
-                len(TushareAdapter._limit_cache[key]),
-            )
             return TushareAdapter._limit_cache[key]
+        disk = self._load_market_table_from_disk("limit", trade_date)
+        if disk is not None:
+            if not disk.empty:
+                TushareAdapter._limit_cache[key] = disk
+                return disk
+            logger.warning("[数据] limit 磁盘缓存为空，触发实时重拉 trade_date=%s", trade_date)
         try:
             df = self._call(
                 "stk_limit",
@@ -201,17 +496,22 @@ class TushareAdapter(MarketDataAdapter):
             logger.warning("[数据] stk_limit(%s) 失败: %s", key, exc)
             df = pd.DataFrame()
         TushareAdapter._limit_cache[key] = df
+        self._save_market_table_to_disk("limit", trade_date, df)
         return df
 
     def _moneyflow_market(self, trade_date: date) -> pd.DataFrame:
         key = _fmt(trade_date)
         if key in TushareAdapter._moneyflow_cache:
-            logger.debug(
-                "[数据] moneyflow_dc(%s) 命中缓存，跳过接口（全市场约 %d 行）",
-                key,
-                len(TushareAdapter._moneyflow_cache[key]),
-            )
             return TushareAdapter._moneyflow_cache[key]
+        disk = self._load_market_table_from_disk("moneyflow", trade_date)
+        if disk is not None:
+            if not disk.empty:
+                TushareAdapter._moneyflow_cache[key] = disk
+                return disk
+            logger.warning(
+                "[数据] moneyflow 磁盘缓存为空，触发实时重拉 trade_date=%s",
+                trade_date,
+            )
         try:
             df = self._call(
                 "moneyflow_dc",
@@ -221,7 +521,19 @@ class TushareAdapter(MarketDataAdapter):
         except Exception as exc:
             logger.warning("[数据] moneyflow_dc(%s) 失败: %s", key, exc)
             df = pd.DataFrame()
+        if df.empty:
+            try:
+                # 兼容部分账号/网关下 moneyflow_dc 无数据的情况，退化到 moneyflow。
+                df = self._call(
+                    "moneyflow",
+                    plain=f"moneyflow_dc为空，回退拉取 {trade_date} moneyflow 主力资金流向",
+                    trade_date=key,
+                )
+            except Exception as exc:
+                logger.warning("[数据] moneyflow(%s) 失败: %s", key, exc)
+                df = pd.DataFrame()
         TushareAdapter._moneyflow_cache[key] = df
+        self._save_market_table_to_disk("moneyflow", trade_date, df)
         return df
 
     def prefetch_shared_market_data(
@@ -251,31 +563,55 @@ class TushareAdapter(MarketDataAdapter):
             price_days = self.get_trade_days(price_start, trade_date)
             need_days = sorted({*flow_days, *price_days, trade_date})
 
-        api_calls = 0
-        for td in need_days:
-            key = _fmt(td)
-            before = (
-                key not in TushareAdapter._daily_cache,
-                key not in TushareAdapter._limit_cache,
-                key not in TushareAdapter._moneyflow_cache,
-            )
-            self._daily_market(td)
-            self._limit_table(td)
-            self._moneyflow_market(td)
-            if any(before):
-                api_calls += sum(before)
+        if settings.market_cache_enabled:
+            from app.services.market_cache import get_market_cache
+
+            stats = get_market_cache().ensure_days(self, need_days)
+            api_calls = stats.get("api_calls", 0)
+            skipped = stats.get("skipped", 0)
+            fetched = stats.get("fetched", 0)
+        else:
+            api_calls = 0
+            skipped = 0
+            fetched = 0
+            for td in need_days:
+                key = _fmt(td)
+                before = (
+                    key not in TushareAdapter._daily_cache,
+                    key not in TushareAdapter._limit_cache,
+                    key not in TushareAdapter._moneyflow_cache,
+                )
+                daily_df = self._daily_market(td)
+                limit_df = self._limit_table(td)
+                money_df = self._moneyflow_market(td)
+                logger.info(
+                    "[数据] %s 三张表已加载 daily=%d limit=%d moneyflow=%d%s",
+                    key,
+                    len(daily_df),
+                    len(limit_df),
+                    len(money_df),
+                    "（含API拉取）" if any(before) else "（内存/磁盘）",
+                )
+                if any(before):
+                    api_calls += sum(before)
+            fetched = len(need_days)
 
         logger.info(
-            "[流程] 全市场公有数据预取完成 anchor=%s 交易日 %d 个（%s ~ %s）本次新请求约 %d 次",
+            "[流程] 全市场公有数据预取完成 anchor=%s 交易日 %d 个（%s ~ %s）"
+            " 跳过缓存 %d 日 新拉 %d 日 API约 %d 次",
             trade_date,
             len(need_days),
             need_days[0] if need_days else trade_date,
             need_days[-1] if need_days else trade_date,
+            skipped,
+            fetched,
             api_calls,
         )
         return {
             "trade_days": len(need_days),
             "api_calls": api_calls,
+            "skipped": skipped,
+            "fetched": fetched,
             "flow_days": len(flow_days),
             "price_days": len(price_days),
         }
@@ -337,8 +673,8 @@ class TushareAdapter(MarketDataAdapter):
         if not stock_codes:
             return []
         t0 = time.monotonic()
-        logger.info(
-            "[数据] get_stock_quotes 开始 sector=%s stocks=%d lookback_days=%d date=%s",
+        logger.debug(
+            "[数据] get_stock_quotes sector=%s stocks=%d lookback=%d date=%s",
             sector_code or "-",
             len(stock_codes),
             price_lookback_days,
@@ -360,8 +696,8 @@ class TushareAdapter(MarketDataAdapter):
             if daily.empty:
                 continue
             sub = daily[daily["ts_code"].isin(ts_set)]
-            logger.info(
-                "[数据] get_stock_quotes 交易日 %s daily过滤 %d/%d 只 本日耗时=%.2fs",
+            logger.debug(
+                "[数据] get_stock_quotes %s 过滤 %d/%d 耗时=%.2fs",
                 td,
                 len(sub),
                 len(ts_set),
@@ -404,7 +740,9 @@ class TushareAdapter(MarketDataAdapter):
             bars = sorted(history.get(tc, []), key=lambda x: x["trade_date"])
             if not bars:
                 continue
-            row = bars[-1]
+            row = next((b for b in reversed(bars) if b["trade_date"] == trade_date), None)
+            if row is None:
+                continue
             up_lim = row["up_limit"]
             close = row["close"]
             high = row["high"]
@@ -436,13 +774,12 @@ class TushareAdapter(MarketDataAdapter):
                     net_inflow_main=inflow[-1] if inflow else 0.0,
                 )
             )
-        logger.info(
-            "[数据] get_stock_quotes 完成 sector=%s 耗时=%.2fs 有行情=%d/%d trade_days=%d",
+        logger.debug(
+            "[数据] get_stock_quotes 完成 sector=%s 耗时=%.2fs 有行情=%d/%d",
             sector_code or "-",
             time.monotonic() - t0,
             len(results),
             len(stock_codes),
-            len(trade_days),
         )
         return results
 
