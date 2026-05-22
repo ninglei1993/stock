@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams, Link, useSearchParams } from "react-router-dom";
 import { api, SectorDetail as SectorDetailType } from "../api";
 import { STAGE_LABEL, POSITION_LABEL, pctClass, formatPct } from "../utils";
@@ -19,6 +19,9 @@ export default function SectorDetail() {
     trade_date: string;
     rules: unknown[];
   } | null>(null);
+  const [northboundInput, setNorthboundInput] = useState("");
+  const [northboundSaving, setNorthboundSaving] = useState(false);
+  const [northboundMsg, setNorthboundMsg] = useState("");
 
   const summarizeRuleCurrent = (current: unknown) => {
     if (!current || typeof current !== "object" || Array.isArray(current)) return current;
@@ -30,7 +33,7 @@ export default function SectorDetail() {
     return clone;
   };
 
-  useEffect(() => {
+  const fetchDetail = useCallback(() => {
     if (!code) return;
     setLoading(true);
     api
@@ -39,6 +42,40 @@ export default function SectorDetail() {
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, [code, tradeDate, stocksLimit]);
+
+  useEffect(() => {
+    fetchDetail();
+  }, [fetchDetail]);
+
+  const submitNorthbound = async () => {
+    if (!code || !detail) return;
+    const val = northboundInput.trim();
+    if (val === "") {
+      setNorthboundMsg("请输入北向资金5日净流入金额（亿元）");
+      return;
+    }
+    const num = parseFloat(val);
+    if (Number.isNaN(num)) {
+      setNorthboundMsg("请输入有效数字");
+      return;
+    }
+    setNorthboundSaving(true);
+    setNorthboundMsg("");
+    try {
+      await api.setAStrategyManualInput({
+        trade_date: detail.trade_date,
+        sector_code: code,
+        northbound_5d_yi: num,
+      });
+      setNorthboundMsg(`已保存北向 ${num} 亿，正在重新评估…`);
+      fetchDetail();
+      setNorthboundMsg(`已保存北向 ${num} 亿，指标已重新核对`);
+    } catch (e) {
+      setNorthboundMsg(e instanceof Error ? e.message : "保存失败");
+    } finally {
+      setNorthboundSaving(false);
+    }
+  };
 
   if (loading) return <div className="loading">加载中…</div>;
   if (error) return <div className="error">{error}</div>;
@@ -52,8 +89,8 @@ export default function SectorDetail() {
   return (
     <div className="detail-page">
       <div className="detail-header">
-        <Link to="/" className="back-link">
-          ← 返回仪表盘
+        <Link to="/scan" className="back-link">
+          ← 返回扫盘
         </Link>
         <div className="detail-title-row">
           <h2 className="page-title" style={{ marginBottom: 0 }}>
@@ -208,6 +245,36 @@ export default function SectorDetail() {
           )}
         </div>
       )}
+
+      <div className="card-glass" style={{ marginBottom: "1rem", padding: "0.85rem 1.1rem" }}>
+        <h3 style={{ fontSize: "0.95rem", margin: "0 0 0.6rem" }}>北向资金（手动输入）</h3>
+        <p style={{ fontSize: "0.78rem", color: "var(--muted)", margin: "0 0 0.6rem" }}>
+          输入该板块近5日北向资金净流入（亿元），提交后将重新核对「资金连续流入」指标（阈值：≥2亿视为通过）。
+          Tushare 普通权限暂无北向资金个股分板块接口，需手动查阅后填入。
+        </p>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
+          <input
+            type="number"
+            step="0.01"
+            placeholder="北向5日净流入（亿元）"
+            value={northboundInput}
+            onChange={(e) => setNorthboundInput(e.target.value)}
+            disabled={northboundSaving}
+            style={{ width: "12rem" }}
+          />
+          <button
+            className="btn btn-primary"
+            style={{ fontSize: "0.85rem" }}
+            onClick={submitNorthbound}
+            disabled={northboundSaving}
+          >
+            {northboundSaving ? "保存中…" : "提交并重新核对"}
+          </button>
+        </div>
+        {northboundMsg && (
+          <p style={{ margin: "0.5rem 0 0", fontSize: "0.82rem", color: "var(--muted)" }}>{northboundMsg}</p>
+        )}
+      </div>
 
       <div className="metric-grid">
         <div className="metric-card">

@@ -42,6 +42,7 @@ class TaskState:
 
 _lock = threading.Lock()
 _scan_task = TaskState(task_type="scan", status="idle")
+_cancel_requested = False
 
 
 def get_scan_task() -> TaskState:
@@ -117,3 +118,34 @@ def fail_scan(error: str) -> None:
         _scan_task.message = "扫描失败"
         _scan_task.error = error
         _scan_task.finished_at = datetime.utcnow().isoformat() + "Z"
+
+
+def request_cancel_scan() -> bool:
+    global _cancel_requested
+    with _lock:
+        if _scan_task.status != "running":
+            return False
+        _cancel_requested = True
+        _scan_task.message = "正在停止扫描…"
+        return True
+
+
+def is_cancel_requested() -> bool:
+    with _lock:
+        return _cancel_requested
+
+
+def clear_cancel_flag() -> None:
+    global _cancel_requested
+    with _lock:
+        _cancel_requested = False
+
+
+def cancel_scan() -> None:
+    global _cancel_requested
+    with _lock:
+        _scan_task.status = "failed"
+        _scan_task.message = "扫描已被用户停止"
+        _scan_task.error = "用户手动停止"
+        _scan_task.finished_at = datetime.utcnow().isoformat() + "Z"
+        _cancel_requested = False

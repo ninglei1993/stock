@@ -62,9 +62,13 @@ from app.services.trade_calendar import (
     ui_default_scan_range,
 )
 from app.services.task_status import (
+    cancel_scan,
+    clear_cancel_flag,
     fail_scan,
     finish_scan,
     get_scan_task,
+    is_cancel_requested,
+    request_cancel_scan,
     start_scan,
     update_scan_progress,
 )
@@ -592,6 +596,15 @@ async def scan_task_status():
     return TaskStatusOut(**get_scan_task().to_dict())
 
 
+@router.post("/tasks/scan/cancel")
+async def cancel_scan_task():
+    """请求停止当前后台扫盘任务。"""
+    ok = request_cancel_scan()
+    if not ok:
+        return {"cancelled": False, "message": "当前没有正在运行的扫描任务"}
+    return {"cancelled": True, "message": "已请求停止扫描，将在当前步骤完成后终止"}
+
+
 @router.get("/concepts", response_model=list[ConceptOut])
 async def list_all_concepts():
     from app.services.concept_cache import get_cached_concepts
@@ -684,6 +697,11 @@ def _run_scan_sync(trade_days: list[date]) -> None:
                 scores: list = []
 
                 for day_idx, trade_date in enumerate(ingest_days):
+                    if is_cancel_requested():
+                        cancel_scan()
+                        log.info("[扫描] 用户请求取消，已中止")
+                        return
+
                     day_offset = day_idx * steps_per_day
                     day_label = f"[{day_idx + 1}/{n_days}] {trade_date}"
 
@@ -737,6 +755,11 @@ def _run_scan_sync(trade_days: list[date]) -> None:
                         f"{day_label} 完成",
                         current_trade_date=str(trade_date),
                     )
+
+                if is_cancel_requested():
+                    cancel_scan()
+                    log.info("[扫描] 用户请求取消（评分前），已中止")
+                    return
 
                 # 仅对最后一个交易日执行评分
                 score_offset = n_days * steps_per_day
@@ -944,6 +967,7 @@ async def scan_latest(
         calendar_start=start_date,
         calendar_end=end_date,
     )
+    clear_cancel_flag()
     start_scan(
         str(last_td),
         f"收盘扫描已启动 {req_start} ~ {req_end}…",
@@ -1005,6 +1029,50 @@ async def trigger_scan(trade_date: date, db: AsyncSession = Depends(get_db)):
     return {"trade_date": str(trade_date), "sectors_scored": len(scores)}
 
 
+def _fetch_index_summaries(adapter, td: date) -> list[dict[str, Any]]:
+    from datetime import timedelta
+
+    codes = [
+        ("000001.SH", "上证指数"),
+        ("399001.SZ", "深证成指"),
+        ("000300.SH", "沪深300"),
+    ]
+    out: list[dict[str, Any]] = []
+    start = td - timedelta(days=7)
+    for code, name in codes:
+        try:
+            bars = adapter.get_index_bars(code, start, td)
+        except Exception:
+            continue
+        bars = sorted([b for b in bars if b.trade_date <= td], key=lambda x: x.trade_date)
+        if len(bars) >= 2:
+            today = bars[-1]
+            prev = bars[-2]
+            out.append(
+                {
+                    "code": code,
+                    "name": name,
+                    "close": round(today.close, 2),
+                    "pre_close": round(prev.close, 2),
+                    "pct_change": round(today.pct_change, 2),
+                    "point_change": round(today.close - prev.close, 2),
+                }
+            )
+        elif len(bars) == 1:
+            today = bars[-1]
+            out.append(
+                {
+                    "code": code,
+                    "name": name,
+                    "close": round(today.close, 2),
+                    "pre_close": round(today.close, 2),
+                    "pct_change": round(today.pct_change, 2),
+                    "point_change": 0.0,
+                }
+            )
+    return out
+
+
 @router.get("/dashboard", response_model=DashboardOut)
 async def dashboard(
     trade_date: Optional[date] = None, db: AsyncSession = Depends(get_db)
@@ -1029,8 +1097,20 @@ async def dashboard(
         up_count = int((pct > 0).sum())
         down_count = int((pct < 0).sum())
         flat_count = int((pct == 0).sum())
+        turnover_delta = 0.0
+        try:
+            store = get_market_cache()
+            days = [d for d in store.list_trade_days() if d < anchor]
+            if days:
+                prev_df = store.load(MarketTable.DAILY, days[-1])
+                if prev_df is not None and not prev_df.empty and "amount" in prev_df.columns:
+                    prev_amount = pd.to_numeric(prev_df["amount"], errors="coerce").fillna(0.0)
+                    turnover_delta = round(float((amount.sum() - prev_amount.sum()) / 1e5), 2)
+        except Exception:
+            pass
         return {
             "total_turnover_yi": round(float(amount.sum()) / 1e5, 2),
+            "turnover_delta_yi": turnover_delta,
             "up_count": up_count,
             "down_count": down_count,
             "flat_count": flat_count,
@@ -1085,6 +1165,12 @@ async def dashboard(
                 )
                 for s in sorted(snap.scores, key=lambda x: x.rank)
             ]
+            indices = []
+            try:
+                adapter = get_adapter()
+                indices = await asyncio.to_thread(_fetch_index_summaries, adapter, anchor)
+            except Exception:
+                pass
             return DashboardOut(
                 trade_date=anchor,
                 market_env=env_out,
@@ -1099,6 +1185,7 @@ async def dashboard(
                     if snap.env
                     else 0,
                 },
+                indices=indices,
             )
 
     env_row = await db.get(MarketEnvDaily, td)
@@ -1139,6 +1226,12 @@ async def dashboard(
         for s in scores
     ]
 
+    indices = []
+    try:
+        adapter = get_adapter()
+        indices = await asyncio.to_thread(_fetch_index_summaries, adapter, td)
+    except Exception:
+        pass
     return DashboardOut(
         trade_date=td,
         market_env=env_out,
@@ -1154,6 +1247,7 @@ async def dashboard(
             if env_row
             else 0,
         },
+        indices=indices,
     )
 
 

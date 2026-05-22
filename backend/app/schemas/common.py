@@ -143,6 +143,7 @@ class DashboardOut(BaseModel):
     top_sectors: list[SectorScoreOut]
     latest_scan: Optional[datetime] = None
     market_overview: Optional[dict[str, Any]] = None
+    indices: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class StockPctDayOut(BaseModel):

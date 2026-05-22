@@ -114,6 +114,7 @@ export interface Dashboard {
   top_sectors: SectorScore[];
   market_overview?: {
     total_turnover_yi: number;
+    turnover_delta_yi: number;
     up_count: number;
     down_count: number;
     flat_count: number;
@@ -130,6 +131,14 @@ export interface Dashboard {
       up_limit: number;
     };
   } | null;
+  indices: Array<{
+    code: string;
+    name: string;
+    close: number;
+    pre_close: number;
+    pct_change: number;
+    point_change: number;
+  }>;
 }
 
 export interface Alert {
@@ -318,6 +327,10 @@ export const api = {
       }
     ),
   scanTaskStatus: () => fetchJson<TaskStatus>("/tasks/scan"),
+  cancelScan: () =>
+    fetchJson<{ cancelled: boolean; message: string }>("/tasks/scan/cancel", {
+      method: "POST",
+    }),
   dashboard: (tradeDate?: string) => {
     const q = tradeDate ? `?trade_date=${tradeDate}` : "";
     return fetchJson<Dashboard>(`/dashboard${q}`);
