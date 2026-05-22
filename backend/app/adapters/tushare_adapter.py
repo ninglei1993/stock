@@ -169,22 +169,14 @@ class TushareAdapter(MarketDataAdapter):
             logger.debug("[数据] list_concepts 命中缓存 count=%d", len(TushareAdapter._concepts_cache))
             return TushareAdapter._concepts_cache
         logger.info("[数据] list_concepts 开始 ths_index")
-        frames: list[pd.DataFrame] = []
-        for kwargs in (
-            {"exchange": "A", "type": "N"},
-            {"exchange": "A", "type": "S"},
-            {},
-        ):
+        # 统一口径：按同花顺“概念板块(type=N)”作为默认板块池，避免行业/扩展类型混入导致数量异常膨胀。
+        df = self._call("ths_index", exchange="A", type="N")
+        if df is None or df.empty:
+            # 网关兼容回退：缺少 type 参数时退化到 ths_index 全量。
             try:
-                part = self._call("ths_index", **kwargs)
+                df = self._call("ths_index", exchange="A")
             except Exception:
-                part = pd.DataFrame()
-            if part is not None and not part.empty:
-                frames.append(part)
-        if frames:
-            df = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["ts_code"])
-        else:
-            df = pd.DataFrame()
+                df = self._call("ths_index")
         concepts: list[ConceptInfo] = []
         for _, row in df.iterrows():
             code = str(row.get("ts_code", ""))

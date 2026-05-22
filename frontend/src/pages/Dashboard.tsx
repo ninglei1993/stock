@@ -20,7 +20,7 @@ export default function Dashboard() {
   const [jqRangeLabel, setJqRangeLabel] = useState("");
   const [jqMin, setJqMin] = useState("");
   const [jqMax, setJqMax] = useState("");
-  const [maxStocksPerConcept, setMaxStocksPerConcept] = useState(0);
+  const [maxStocksPerConceptInput, setMaxStocksPerConceptInput] = useState("");
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [clearing, setClearing] = useState(false);
 
@@ -47,7 +47,9 @@ export default function Dashboard() {
       }
       if (s.default_scan_date && !viewDate) setViewDate(s.default_scan_date);
       if (s.ingest_max_stocks_per_concept != null) {
-        setMaxStocksPerConcept(s.ingest_max_stocks_per_concept);
+        setMaxStocksPerConceptInput(
+          s.ingest_max_stocks_per_concept > 0 ? String(s.ingest_max_stocks_per_concept) : ""
+        );
       }
       // 仅保留 Tushare 数据源，无需展示聚宽权限区间
       setJqRangeLabel("");
@@ -111,12 +113,13 @@ export default function Dashboard() {
     return () => clearInterval(id);
   }, [scanRunning, load]);
 
-  const saveMaxStocks = async (value: number) => {
-    const n = Math.max(0, Math.min(500, Math.floor(value) || 0));
+  const saveMaxStocks = async (raw: string) => {
+    const parsed = raw.trim() === "" ? 0 : parseInt(raw, 10);
+    const n = Math.max(0, Math.min(500, Number.isNaN(parsed) ? 0 : Math.floor(parsed)));
     setSettingsSaving(true);
     try {
-      await api.setIngestSettings(n);
-      setMaxStocksPerConcept(n);
+      await api.setIngestSettings(n === 0 ? null : n);
+      setMaxStocksPerConceptInput(n > 0 ? String(n) : "");
     } catch (e) {
       setError(e instanceof Error ? e.message : "保存失败");
     } finally {
@@ -125,13 +128,17 @@ export default function Dashboard() {
   };
 
   const onMaxStocksChange = (raw: string) => {
-    const n = raw === "" ? 0 : parseInt(raw, 10);
+    if (raw === "") {
+      setMaxStocksPerConceptInput("");
+      return;
+    }
+    const n = parseInt(raw, 10);
     if (Number.isNaN(n)) return;
-    setMaxStocksPerConcept(Math.max(0, Math.min(500, n)));
+    setMaxStocksPerConceptInput(String(Math.max(0, Math.min(500, n))));
   };
 
   const onMaxStocksBlur = () => {
-    void saveMaxStocks(maxStocksPerConcept);
+    void saveMaxStocks(maxStocksPerConceptInput);
   };
 
   const runScan = async () => {
@@ -145,7 +152,7 @@ export default function Dashboard() {
       return;
     }
     try {
-      await saveMaxStocks(maxStocksPerConcept);
+      await saveMaxStocks(maxStocksPerConceptInput);
       const started = await api.scanLatest({
         startDate: scanStart,
         endDate: scanEnd,
@@ -201,9 +208,24 @@ export default function Dashboard() {
   const sectors = data?.top_sectors ?? [];
   const displayDate = data?.trade_date || viewDate;
   const riseFallTotal = (marketOverview?.up_count || 0) + (marketOverview?.down_count || 0) + (marketOverview?.flat_count || 0);
+  const maxStocksPerConcept = maxStocksPerConceptInput.trim() === "" ? 0 : (parseInt(maxStocksPerConceptInput, 10) || 0);
   const risePct = riseFallTotal > 0 ? ((marketOverview?.up_count || 0) / riseFallTotal) * 100 : 0;
   const flatPct = riseFallTotal > 0 ? ((marketOverview?.flat_count || 0) / riseFallTotal) * 100 : 0;
   const fallPct = riseFallTotal > 0 ? ((marketOverview?.down_count || 0) / riseFallTotal) * 100 : 0;
+  const dist = marketOverview?.distribution;
+  const distBars = dist
+    ? [
+        { key: "down_limit", label: "跌停", count: dist.down_limit, color: "var(--down)" },
+        { key: "neg_7_5", label: "≤-7%", count: dist.neg_7_5, color: "var(--down)" },
+        { key: "neg_5_3", label: "-7~-5%", count: dist.neg_5_3, color: "var(--down)" },
+        { key: "neg_3_0", label: "-5~0%", count: dist.neg_3_0, color: "var(--down)" },
+        { key: "flat", label: "平", count: dist.flat, color: "var(--muted)" },
+        { key: "pos_0_3", label: "0~3%", count: dist.pos_0_3, color: "var(--up)" },
+        { key: "pos_3_5", label: "3~5%", count: dist.pos_3_5, color: "var(--up)" },
+        { key: "pos_5_7", label: "5~7%", count: dist.pos_5_7, color: "var(--up)" },
+        { key: "up_limit", label: "涨停", count: dist.up_limit, color: "var(--up)" },
+      ]
+    : [];
 
   return (
     <>
@@ -235,7 +257,7 @@ export default function Dashboard() {
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", gap: "0.7rem", marginBottom: "0.85rem" }}>
             <div style={{ border: "1px solid var(--line)", borderRadius: "10px", padding: "0.65rem 0.75rem" }}>
-              <div style={{ color: "var(--muted)", fontSize: "0.8rem" }}>全市场成交额（板块聚合）</div>
+              <div style={{ color: "var(--muted)", fontSize: "0.8rem" }}>全市场成交额</div>
               <div style={{ fontSize: "1.65rem", fontWeight: 700, lineHeight: 1.2 }}>
                 {formatYi(marketOverview?.total_turnover_yi || 0)}
                 <span style={{ fontSize: "0.95rem", color: "var(--muted)", marginLeft: "0.25rem" }}>亿</span>
@@ -275,6 +297,16 @@ export default function Dashboard() {
               <div style={{ width: `${flatPct}%`, background: "var(--muted)" }} />
               <div style={{ width: `${fallPct}%`, background: "var(--down)" }} />
             </div>
+            {!!distBars.length && (
+              <div style={{ marginTop: "0.75rem", display: "grid", gridTemplateColumns: "repeat(9, minmax(0,1fr))", gap: "0.45rem" }}>
+                {distBars.map((item) => (
+                  <div key={item.key} style={{ textAlign: "center" }}>
+                    <div style={{ fontSize: "0.85rem", fontWeight: 700, color: item.color }}>{item.count}</div>
+                    <div style={{ fontSize: "0.72rem", color: "var(--muted)" }}>{item.label}</div>
+                  </div>
+                ))}
+              </div>
+            )}
             {env && (
               <div style={{ marginTop: "0.55rem", fontSize: "0.78rem", color: "var(--muted)" }}>
                 涨停 {env.limit_up_count} 家 · 涨跌比 {(env.up_down_ratio * 100).toFixed(0)}% · 沪深300{" "}
@@ -317,12 +349,13 @@ export default function Dashboard() {
               min={0}
               max={500}
               step={1}
-              value={maxStocksPerConcept}
+              value={maxStocksPerConceptInput}
               onChange={(e) => onMaxStocksChange(e.target.value)}
               onBlur={onMaxStocksBlur}
               disabled={scanRunning || settingsSaving}
               style={{ width: "6rem" }}
-              title="0 表示分析全部成分股"
+              title="留空或0表示分析全部成分股"
+              placeholder="全部"
             />
           </div>
           {jqRangeLabel && (

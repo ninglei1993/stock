@@ -66,7 +66,9 @@ class TaskStatusOut(BaseModel):
 
 
 class SetIngestSettingsIn(BaseModel):
-    max_stocks_per_concept: int = Field(ge=0, le=500, description="0=不限制，分析全部成分股")
+    max_stocks_per_concept: Optional[int] = Field(
+        default=None, ge=0, le=500, description="留空或0=不限制，分析全部成分股"
+    )
 
 
 class ScanSectorsOut(BaseModel):

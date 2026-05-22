@@ -3,6 +3,7 @@ import time
 from typing import Any, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+import pandas as pd
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -577,10 +578,11 @@ async def set_ingest_settings(body: SetIngestSettingsIn):
     """设置每个板块最多分析的成分股数（0=全部）。写入 ingest_settings.override.json。"""
     from app.services.ingest_settings_store import write_max_stocks_override
 
-    write_max_stocks_override(body.max_stocks_per_concept)
+    max_stocks = int(body.max_stocks_per_concept or 0)
+    write_max_stocks_override(max_stocks)
     return {
         "message": "入库参数已保存",
-        "ingest_max_stocks_per_concept": body.max_stocks_per_concept,
+        "ingest_max_stocks_per_concept": max_stocks,
     }
 
 
@@ -1007,6 +1009,45 @@ async def trigger_scan(trade_date: date, db: AsyncSession = Depends(get_db)):
 async def dashboard(
     trade_date: Optional[date] = None, db: AsyncSession = Depends(get_db)
 ):
+    def _market_overview_from_cache(anchor: date, limit_up_count: int) -> Optional[dict]:
+        from app.services.market_cache import MarketTable, get_market_cache
+
+        try:
+            df = get_market_cache().load(MarketTable.DAILY, anchor)
+        except Exception:
+            return None
+        if df is None or df.empty:
+            return None
+        if not {"close", "pre_close", "amount"}.issubset(set(df.columns)):
+            return None
+        pre = pd.to_numeric(df["pre_close"], errors="coerce")
+        close = pd.to_numeric(df["close"], errors="coerce")
+        pct = ((close / pre) - 1.0) * 100.0
+        pct = pct.where(pre > 0)
+        pct = pct.fillna(0.0)
+        amount = pd.to_numeric(df["amount"], errors="coerce").fillna(0.0)
+        up_count = int((pct > 0).sum())
+        down_count = int((pct < 0).sum())
+        flat_count = int((pct == 0).sum())
+        return {
+            "total_turnover_yi": round(float(amount.sum()) / 1e5, 2),
+            "up_count": up_count,
+            "down_count": down_count,
+            "flat_count": flat_count,
+            "limit_up_count": int(limit_up_count or 0),
+            "distribution": {
+                "down_limit": int((pct <= -9.8).sum()),
+                "neg_7_5": int(((pct > -9.8) & (pct <= -7)).sum()),
+                "neg_5_3": int(((pct > -7) & (pct <= -5)).sum()),
+                "neg_3_0": int(((pct > -5) & (pct < 0)).sum()),
+                "flat": flat_count,
+                "pos_0_3": int(((pct > 0) & (pct < 3)).sum()),
+                "pos_3_5": int(((pct >= 3) & (pct < 5)).sum()),
+                "pos_5_7": int(((pct >= 5) & (pct < 7)).sum()),
+                "up_limit": int((pct >= 9.8).sum()),
+            },
+        }
+
     td = _normalize_requested_trade_date(trade_date) or await _latest_trade_date(db)
     if not td:
         return DashboardOut(trade_date=None, market_env=None, top_sectors=[])
@@ -1021,10 +1062,10 @@ async def dashboard(
             env_out = MarketEnvOut.model_validate(snap.env) if snap.env else None
             leaders = snap.leader_map
             pct_map: dict[str, float] = {}
-            money_total = 0.0
-            up_count = 0
-            down_count = 0
-            flat_count = 0
+            overview = _market_overview_from_cache(
+                anchor,
+                int(getattr(snap.env, "limit_up_count", 0) or 0) if snap.env else 0,
+            )
             if snap.scores:
                 from app.services.volatile_scan import get_today_buffer
 
@@ -1035,13 +1076,6 @@ async def dashboard(
                             continue
                         pct = float(getattr(r, "pct_change", 0) or 0)
                         pct_map[r.sector_code] = pct
-                        money_total += float(getattr(r, "money", 0) or 0)
-                        if pct > 0:
-                            up_count += 1
-                        elif pct < 0:
-                            down_count += 1
-                        else:
-                            flat_count += 1
             top = [
                 _sector_score_out(
                     s,
@@ -1055,13 +1089,12 @@ async def dashboard(
                 trade_date=anchor,
                 market_env=env_out,
                 top_sectors=top,
-                market_overview={
-                    # money 来源于 Tushare daily 的 amount（本项目实际口径更接近「千元」）；
-                    # 这里展示「亿元」，因此需要除以 1e5（1e5 千元 = 1 亿元）。
-                    "total_turnover_yi": round(money_total / 1e5, 2),
-                    "up_count": up_count,
-                    "down_count": down_count,
-                    "flat_count": flat_count,
+                market_overview=overview
+                or {
+                    "total_turnover_yi": 0.0,
+                    "up_count": 0,
+                    "down_count": 0,
+                    "flat_count": 0,
                     "limit_up_count": int(getattr(snap.env, "limit_up_count", 0) or 0)
                     if snap.env
                     else 0,
@@ -1075,6 +1108,9 @@ async def dashboard(
         await db.execute(select(SectorDaily).where(SectorDaily.trade_date == td))
     ).scalars().all()
     pct_map = {r.sector_code: float(r.pct_change or 0) for r in daily_rows}
+    overview = _market_overview_from_cache(
+        td, int(getattr(env_row, "limit_up_count", 0) or 0) if env_row else 0
+    )
     money_total = sum(float(r.money or 0) for r in daily_rows)
     up_count = sum(1 for r in daily_rows if (r.pct_change or 0) > 0)
     down_count = sum(1 for r in daily_rows if (r.pct_change or 0) < 0)
@@ -1107,9 +1143,9 @@ async def dashboard(
         trade_date=td,
         market_env=env_out,
         top_sectors=top,
-        market_overview={
-            # money 来源于 Tushare daily 的 amount（本项目实际口径更接近「千元」）；
-            # 这里展示「亿元」，因此需要除以 1e5（1e5 千元 = 1 亿元）。
+        market_overview=overview
+        or {
+            # 回退口径：仅基于已扫描板块（用于缓存缺失时保底展示）
             "total_turnover_yi": round(money_total / 1e5, 2),
             "up_count": up_count,
             "down_count": down_count,

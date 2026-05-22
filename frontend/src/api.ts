@@ -118,6 +118,17 @@ export interface Dashboard {
     down_count: number;
     flat_count: number;
     limit_up_count: number;
+    distribution?: {
+      down_limit: number;
+      neg_7_5: number;
+      neg_5_3: number;
+      neg_3_0: number;
+      flat: number;
+      pos_0_3: number;
+      pos_3_5: number;
+      pos_5_7: number;
+      up_limit: number;
+    };
   } | null;
 }
 
@@ -298,7 +309,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
   listConcepts: () => fetchJson<ConceptItem[]>("/concepts"),
-  setIngestSettings: (maxStocksPerConcept: number) =>
+  setIngestSettings: (maxStocksPerConcept: number | null) =>
     fetchJson<{ message: string; ingest_max_stocks_per_concept: number }>(
       "/system/ingest-settings",
       {
