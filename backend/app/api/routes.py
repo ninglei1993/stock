@@ -23,6 +23,7 @@ from app.models.tables import (
     ThemeLeaderDaily,
 )
 from app.adapters.factory import adapter_info, get_adapter
+from app.adapters.tushare_codes import to_internal_code
 from app.config import settings
 from app.api.backtest_helpers import trade_to_out
 from app.labels import BACKTEST_TRADE_NOTE, STRATEGY_LABELS
@@ -40,6 +41,7 @@ from app.schemas.common import (
     DashboardOut,
     EquityPointOut,
     FlowDayOut,
+    LimitStockListOut,
     MarketEnvOut,
     ReviewDayOut,
     SectorDetailOut,
@@ -73,7 +75,7 @@ from app.services.task_status import (
     start_scan,
     update_scan_progress,
 )
-from app.services.stock_names import resolve_stock_name
+from app.services.stock_names import clear_name_cache, resolve_stock_name
 from app.services.backtest_engine import BacktestEngine
 from app.services.ingestion import IngestionService
 from app.services.scan_service import ScanService
@@ -1353,6 +1355,226 @@ async def dashboard(
         },
         indices=indices,
     )
+
+
+@router.get("/dashboard/limit-stocks", response_model=LimitStockListOut)
+async def dashboard_limit_stocks(
+    side: str = Query(default="up", pattern="^(up|down)$"),
+    trade_date: Optional[date] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    from app.services.market_cache import MarketTable, get_market_cache
+
+    def _is_a_share_code(ts_code: str) -> bool:
+        c = str(ts_code or "").strip().upper()
+        if len(c) < 3 or "." not in c:
+            return False
+        num, suffix = c.split(".", 1)
+        if suffix == "SH":
+            return num.startswith("6")
+        if suffix == "SZ":
+            return num.startswith(("0", "3"))
+        if suffix == "BJ":
+            return True
+        return False
+
+    td = _normalize_requested_trade_date(trade_date) or await _latest_trade_date(db)
+    if not td:
+        return LimitStockListOut(trade_date=None, side=side, total=0, items=[])
+
+    store = get_market_cache()
+    adapter = None
+    try:
+        daily = store.load(MarketTable.DAILY, td)
+    except Exception:
+        daily = None
+    if daily is None or daily.empty:
+        try:
+            adapter = get_adapter()
+            if hasattr(adapter, "_daily_market"):
+                daily = adapter._daily_market(td)  # type: ignore[attr-defined]
+        except Exception:
+            daily = None
+
+    try:
+        limit_df = store.load(MarketTable.LIMIT, td)
+    except Exception:
+        limit_df = None
+    if (limit_df is None or limit_df.empty) and adapter is None:
+        try:
+            adapter = get_adapter()
+        except Exception:
+            adapter = None
+    if (limit_df is None or limit_df.empty) and adapter is not None:
+        try:
+            if hasattr(adapter, "_limit_table"):
+                limit_df = adapter._limit_table(td)  # type: ignore[attr-defined]
+        except Exception:
+            limit_df = None
+
+    required_daily_cols = {"ts_code", "close", "pre_close"}
+    required_limit_cols = {"ts_code", "up_limit", "down_limit"}
+    if (
+        daily is None
+        or daily.empty
+        or limit_df is None
+        or limit_df.empty
+        or not required_daily_cols.issubset(set(daily.columns))
+        or not required_limit_cols.issubset(set(limit_df.columns))
+    ):
+        return LimitStockListOut(trade_date=td, side=side, total=0, items=[])
+
+    daily = daily[daily["ts_code"].astype(str).map(_is_a_share_code)].copy()
+    limit_df = limit_df[limit_df["ts_code"].astype(str).map(_is_a_share_code)].copy()
+    daily_cols = ["ts_code", "close", "pre_close"]
+    if "name" in daily.columns:
+        daily_cols.append("name")
+    merged = daily[daily_cols].merge(
+        limit_df[["ts_code", "up_limit", "down_limit"]],
+        on="ts_code",
+        how="inner",
+    )
+    if merged.empty:
+        return LimitStockListOut(trade_date=td, side=side, total=0, items=[])
+
+    close = pd.to_numeric(merged["close"], errors="coerce").round(2)
+    up_limit = pd.to_numeric(merged["up_limit"], errors="coerce").round(2)
+    down_limit = pd.to_numeric(merged["down_limit"], errors="coerce").round(2)
+    pre_close = pd.to_numeric(merged["pre_close"], errors="coerce")
+    pct_change = (((close / pre_close) - 1.0) * 100.0).where(pre_close > 0).fillna(0.0)
+
+    if side == "up":
+        mask = (close == up_limit) & up_limit.notna()
+        limit_price = up_limit
+    else:
+        mask = (close == down_limit) & down_limit.notna()
+        limit_price = down_limit
+
+    rows = merged.loc[mask].copy()
+    if rows.empty:
+        return LimitStockListOut(trade_date=td, side=side, total=0, items=[])
+    rows = rows.assign(
+        close=close.loc[mask].values,
+        limit_price=limit_price.loc[mask].values,
+        pct_change=pct_change.loc[mask].values,
+    )
+    rows = rows.sort_values(
+        by=["pct_change", "ts_code"],
+        ascending=[False, True] if side == "up" else [True, True],
+    )
+
+    # 名称优先使用 Tushare stock_basic 全量映射；若缓存曾异常为空，尝试刷新一次。
+    fresh_name_map: dict[str, str] = {}
+    try:
+        from app.adapters.tushare_adapter import load_stock_name_map
+
+        fresh_name_map = load_stock_name_map()
+        if not fresh_name_map:
+            clear_name_cache()
+            fresh_name_map = load_stock_name_map()
+    except Exception:
+        fresh_name_map = {}
+    if not fresh_name_map:
+        try:
+            adapter = adapter or get_adapter()
+            if hasattr(adapter, "_call"):
+                name_df = adapter._call(
+                    "stock_basic",
+                    exchange="",
+                    list_status="L",
+                    fields="ts_code,name",
+                )
+                if name_df is not None and not name_df.empty and {"ts_code", "name"}.issubset(set(name_df.columns)):
+                    fresh_name_map = {
+                        to_internal_code(str(r["ts_code"])): str(r["name"])
+                        for _, r in name_df.iterrows()
+                        if str(r.get("ts_code", "")).strip()
+                    }
+        except Exception:
+            fresh_name_map = {}
+
+    def _fetch_quote_names_fallback(ts_codes: list[str]) -> dict[str, str]:
+        """公开行情名称兜底（不依赖 Tushare 权限），仅用于未解析出中文名的股票。"""
+        import re
+        from urllib.request import Request, urlopen
+
+        sym_to_ts: dict[str, str] = {}
+        for ts in ts_codes:
+            raw = str(ts or "").strip().upper()
+            if "." not in raw:
+                continue
+            num, suffix = raw.split(".", 1)
+            if suffix == "SH":
+                sym_to_ts[f"sh{num}"] = raw
+            elif suffix == "SZ":
+                sym_to_ts[f"sz{num}"] = raw
+            elif suffix == "BJ":
+                sym_to_ts[f"bj{num}"] = raw
+        if not sym_to_ts:
+            return {}
+
+        url = f"https://hq.sinajs.cn/list={','.join(sym_to_ts.keys())}"
+        req = Request(
+            url,
+            headers={
+                "Referer": "https://finance.sina.com.cn/",
+                "User-Agent": "Mozilla/5.0",
+            },
+        )
+        try:
+            with urlopen(req, timeout=4) as resp:
+                text = resp.read().decode("gbk", errors="ignore")
+        except Exception:
+            return {}
+        out: dict[str, str] = {}
+        for line in text.split(";"):
+            line = line.strip()
+            if not line:
+                continue
+            m = re.search(r'var hq_str_([a-z0-9]+)="([^"]*)"', line, flags=re.IGNORECASE)
+            if not m:
+                continue
+            sym = m.group(1).lower()
+            payload = m.group(2)
+            name = payload.split(",", 1)[0].strip() if payload else ""
+            ts = sym_to_ts.get(sym)
+            if ts and name:
+                out[ts] = name
+        return out
+
+    row_items: list[dict[str, Any]] = []
+    unresolved_codes: list[str] = []
+    for _, r in rows.iterrows():
+        ts_code = str(r["ts_code"])
+        internal = to_internal_code(ts_code)
+        day_name = str(r.get("name", "") or "").strip()
+        stock_name = (
+            (day_name if day_name and day_name not in {ts_code, internal} else "")
+            or fresh_name_map.get(internal)
+            or resolve_stock_name(internal)
+            or resolve_stock_name(ts_code)
+            or ts_code
+        )
+        if stock_name in {internal, ts_code, ""}:
+            unresolved_codes.append(ts_code)
+        row_items.append(
+            {
+                "stock_code": ts_code,
+                "stock_name": stock_name,
+                "close": round(float(r["close"]), 2),
+                "limit_price": round(float(r["limit_price"]), 2),
+                "pct_change": round(float(r["pct_change"]), 2),
+            }
+        )
+    if unresolved_codes:
+        fallback_names = _fetch_quote_names_fallback(unresolved_codes)
+        if fallback_names:
+            for item in row_items:
+                code = item["stock_code"]
+                if item["stock_name"] in {code, to_internal_code(code), ""}:
+                    item["stock_name"] = fallback_names.get(code, item["stock_name"])
+    items = row_items
+    return LimitStockListOut(trade_date=td, side=side, total=len(items), items=items)
 
 
 @router.get("/alerts", response_model=list[AlertOut])

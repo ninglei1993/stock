@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, Dashboard as DashboardData } from "../api";
+import { api, Dashboard as DashboardData, LimitStockItem } from "../api";
 import { pctClass, formatPct, STAGE_LABEL, ENV_CONCLUSION_LABEL } from "../utils";
 
 function formatWanYi(v: number): string {
@@ -14,6 +14,12 @@ export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [limitOpen, setLimitOpen] = useState(false);
+  const [limitSide, setLimitSide] = useState<"up" | "down">("up");
+  const [limitItems, setLimitItems] = useState<LimitStockItem[]>([]);
+  const [limitLoading, setLimitLoading] = useState(false);
+  const [limitError, setLimitError] = useState("");
+  const [limitTradeDate, setLimitTradeDate] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -28,13 +34,34 @@ export default function Dashboard() {
     load();
   }, [load]);
 
+  const displayDate = data?.trade_date;
+  const openLimitDetail = useCallback(
+    (side: "up" | "down") => {
+      setLimitOpen(true);
+      setLimitSide(side);
+      setLimitLoading(true);
+      setLimitError("");
+      api
+        .dashboardLimitStocks(side, displayDate || undefined)
+        .then((res) => {
+          setLimitItems(res.items || []);
+          setLimitTradeDate(res.trade_date || displayDate || null);
+        })
+        .catch((e) => {
+          setLimitError(e.message || "加载失败");
+          setLimitItems([]);
+        })
+        .finally(() => setLimitLoading(false));
+    },
+    [displayDate]
+  );
+
   if (loading && !data) {
     return <div className="loading">加载中…</div>;
   }
 
   const env = data?.market_env;
   const marketOverview = data?.market_overview;
-  const displayDate = data?.trade_date;
   const indices = data?.indices || [];
   const hasMarketData = indices.length > 0 || !!marketOverview;
 
@@ -42,7 +69,7 @@ export default function Dashboard() {
 
   const alignedBars = dist
     ? [
-        { label: "跌停", count: dist.down_limit, color: "#22c55e" },
+        { label: "跌停", count: dist.down_limit, color: "#22c55e", detailSide: "down" as const },
         { label: "<-7%", count: dist.neg_7_plus, color: "#22c55e" },
         { label: "-7~-5%", count: dist.neg_7_5, color: "#22c55e" },
         { label: "-5~-3%", count: dist.neg_5_3, color: "#22c55e" },
@@ -52,7 +79,7 @@ export default function Dashboard() {
         { label: "3~5%", count: dist.pos_3_5, color: "#ef4444" },
         { label: "5~7%", count: dist.pos_5_7, color: "#ef4444" },
         { label: "≥7%", count: dist.pos_7_plus, color: "#ef4444" },
-        { label: "涨停", count: dist.up_limit, color: "#ef4444" },
+        { label: "涨停", count: dist.up_limit, color: "#ef4444", detailSide: "up" as const },
       ]
     : [];
 
@@ -142,6 +169,23 @@ export default function Dashboard() {
         >
           <div style={{ display: "flex", alignItems: "baseline", gap: "0.9rem", marginBottom: "0.9rem", flexWrap: "wrap" }}>
             <span style={{ fontSize: "2rem", fontWeight: 700, color: "#111827" }}>市场总览</span>
+            {dist && (
+              <button
+                type="button"
+                onClick={() => openLimitDetail("up")}
+                style={{
+                  border: "1px solid #d1d5db",
+                  borderRadius: "999px",
+                  padding: "0.18rem 0.6rem",
+                  fontSize: "0.75rem",
+                  color: "#374151",
+                  background: "#fff",
+                  cursor: "pointer",
+                }}
+              >
+                详情
+              </button>
+            )}
             {marketOverview && (
               <>
                 <span style={{ fontSize: "1.6rem", color: "#374151", fontWeight: 500 }}>
@@ -173,8 +217,30 @@ export default function Dashboard() {
               <div style={{ display: "flex", alignItems: "flex-end", gap: "0.35rem", height: "110px", paddingBottom: "0.5rem" }}>
                 {alignedBars.map((bar) => {
                   const h = maxCount > 0 ? Math.max((bar.count / maxCount) * 80, 4) : 4;
+                  const clickable = !!bar.detailSide;
                   return (
-                    <div key={bar.label} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: "0.25rem" }}>
+                    <div
+                      key={bar.label}
+                      style={{
+                        flex: 1,
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        gap: "0.25rem",
+                        cursor: clickable ? "pointer" : "default",
+                      }}
+                      onClick={() => (bar.detailSide ? openLimitDetail(bar.detailSide) : undefined)}
+                      role={clickable ? "button" : undefined}
+                      tabIndex={clickable ? 0 : undefined}
+                      onKeyDown={(e) => {
+                        if (!bar.detailSide) return;
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          openLimitDetail(bar.detailSide);
+                        }
+                      }}
+                      title={clickable ? "点击查看明细" : undefined}
+                    >
                       <span style={{ fontSize: "0.65rem", color: bar.color, fontWeight: 600 }}>{bar.count > 0 ? bar.count : ""}</span>
                       <div
                         style={{
@@ -250,6 +316,139 @@ export default function Dashboard() {
             ))}
           </div>
         </>
+      )}
+
+      {limitOpen && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(15,23,42,0.45)",
+            zIndex: 70,
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            padding: "1rem",
+          }}
+          onClick={() => setLimitOpen(false)}
+        >
+          <div
+            className="card-glass"
+            style={{ width: "min(780px, 100%)", maxHeight: "80vh", overflow: "auto", padding: "1rem 1.1rem" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.75rem", marginBottom: "0.75rem" }}>
+              <div>
+                <div style={{ fontSize: "1rem", fontWeight: 700, color: "#111827" }}>
+                  {limitSide === "up" ? "涨停明细" : "跌停明细"}
+                </div>
+                <div style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.1rem" }}>
+                  {limitTradeDate || displayDate || "—"}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: "0.5rem" }}>
+                <button
+                  type="button"
+                  onClick={() => openLimitDetail("up")}
+                  style={{
+                    border: "1px solid #fecaca",
+                    borderRadius: "999px",
+                    padding: "0.25rem 0.7rem",
+                    fontSize: "0.75rem",
+                    color: limitSide === "up" ? "#ffffff" : "#ef4444",
+                    background: limitSide === "up" ? "#ef4444" : "#fff",
+                    cursor: "pointer",
+                  }}
+                >
+                  涨停
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openLimitDetail("down")}
+                  style={{
+                    border: "1px solid #bbf7d0",
+                    borderRadius: "999px",
+                    padding: "0.25rem 0.7rem",
+                    fontSize: "0.75rem",
+                    color: limitSide === "down" ? "#ffffff" : "#16a34a",
+                    background: limitSide === "down" ? "#16a34a" : "#fff",
+                    cursor: "pointer",
+                  }}
+                >
+                  跌停
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLimitOpen(false)}
+                  style={{
+                    border: "1px solid #d1d5db",
+                    borderRadius: "999px",
+                    padding: "0.25rem 0.7rem",
+                    fontSize: "0.75rem",
+                    color: "#374151",
+                    background: "#fff",
+                    cursor: "pointer",
+                  }}
+                >
+                  关闭
+                </button>
+              </div>
+            </div>
+
+            {limitError && <p className="error" style={{ marginBottom: "0.5rem" }}>{limitError}</p>}
+            {limitLoading && <div className="loading" style={{ margin: "0.75rem 0" }}>加载中…</div>}
+            {!limitLoading && !limitError && (
+              <div>
+                <div style={{ fontSize: "0.8rem", color: "var(--muted)", marginBottom: "0.5rem" }}>
+                  共 {limitItems.length} 只
+                </div>
+                <div style={{ border: "1px solid #e5e7eb", borderRadius: "10px", overflow: "hidden" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr", padding: "0.55rem 0.7rem", background: "#f8fafc", fontSize: "0.75rem", color: "#6b7280", fontWeight: 600 }}>
+                    <span>股票</span>
+                    <span style={{ textAlign: "right" }}>现价</span>
+                    <span style={{ textAlign: "right" }}>{limitSide === "up" ? "涨停价" : "跌停价"}</span>
+                    <span style={{ textAlign: "right" }}>涨跌幅</span>
+                  </div>
+                  <div style={{ maxHeight: "55vh", overflowY: "auto" }}>
+                    {limitItems.map((item) => (
+                      <div
+                        key={item.stock_code}
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "2fr 1fr 1fr 1fr",
+                          padding: "0.55rem 0.7rem",
+                          fontSize: "0.82rem",
+                          borderTop: "1px solid #f1f5f9",
+                          alignItems: "center",
+                        }}
+                      >
+                        <span style={{ color: "#111827", fontWeight: 500 }}>
+                          {item.stock_name} <span style={{ color: "#94a3b8", fontWeight: 400 }}>{item.stock_code}</span>
+                        </span>
+                        <span style={{ textAlign: "right", color: "#111827" }}>{item.close.toFixed(2)}</span>
+                        <span style={{ textAlign: "right", color: "#111827" }}>{item.limit_price.toFixed(2)}</span>
+                        <span
+                          style={{
+                            textAlign: "right",
+                            color: item.pct_change > 0 ? "#ef4444" : item.pct_change < 0 ? "#16a34a" : "#6b7280",
+                            fontWeight: 600,
+                          }}
+                        >
+                          {formatPct(item.pct_change)}
+                        </span>
+                      </div>
+                    ))}
+                    {limitItems.length === 0 && (
+                      <div style={{ padding: "0.9rem", textAlign: "center", color: "var(--muted)", fontSize: "0.82rem" }}>
+                        当前无数据
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </>
   );

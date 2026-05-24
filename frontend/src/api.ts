@@ -143,6 +143,21 @@ export interface Dashboard {
   }>;
 }
 
+export interface LimitStockItem {
+  stock_code: string;
+  stock_name: string;
+  close: number;
+  limit_price: number;
+  pct_change: number;
+}
+
+export interface LimitStockList {
+  trade_date: string | null;
+  side: "up" | "down";
+  total: number;
+  items: LimitStockItem[];
+}
+
 export interface Alert {
   id: number;
   trade_date: string;
@@ -336,6 +351,12 @@ export const api = {
   dashboard: (tradeDate?: string) => {
     const q = tradeDate ? `?trade_date=${tradeDate}` : "";
     return fetchJson<Dashboard>(`/dashboard${q}`);
+  },
+  dashboardLimitStocks: (side: "up" | "down", tradeDate?: string) => {
+    const params = new URLSearchParams();
+    params.set("side", side);
+    if (tradeDate) params.set("trade_date", tradeDate);
+    return fetchJson<LimitStockList>(`/dashboard/limit-stocks?${params.toString()}`);
   },
   clearData: () =>
     fetchJson<{ message: string; deleted?: Record<string, number> }>(

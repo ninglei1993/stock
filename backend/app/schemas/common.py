@@ -146,6 +146,21 @@ class DashboardOut(BaseModel):
     indices: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class LimitStockItemOut(BaseModel):
+    stock_code: str
+    stock_name: str
+    close: float
+    limit_price: float
+    pct_change: float
+
+
+class LimitStockListOut(BaseModel):
+    trade_date: Optional[date]
+    side: str
+    total: int
+    items: list[LimitStockItemOut] = Field(default_factory=list)
+
+
 class StockPctDayOut(BaseModel):
     trade_date: date
     pct_change: float
