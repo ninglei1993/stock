@@ -869,6 +869,7 @@ class TushareAdapter(MarketDataAdapter):
                     close=close,
                     high=float(row["high"]),
                     low=float(row["low"]),
+                    pre_close=pre,
                     pct_change=round(pct, 2),
                 )
             )
@@ -884,11 +885,7 @@ class TushareAdapter(MarketDataAdapter):
         pct = (close / pre - 1) * 100
         up = int((pct > 0).sum())
         down = int((pct < 0).sum())
-        try:
-            lim = self._call("limit_list_d", trade_date=_fmt(trade_date), limit_type="U")
-            limit_up = len(lim) if lim is not None and not lim.empty else int((pct >= 9.8).sum())
-        except Exception:
-            limit_up = int((pct >= 9.8).sum())
+        limit_up, _ = self.get_limit_counts(trade_date)
         return MarketBreadth(
             trade_date=trade_date,
             limit_up_count=limit_up,
@@ -896,6 +893,124 @@ class TushareAdapter(MarketDataAdapter):
             down_count=down,
             total_count=len(daily),
         )
+
+    def get_limit_counts(self, trade_date: date) -> tuple[int, int]:
+        """
+        仅使用 Tushare《涨跌停列表（新）》统计真实涨停/跌停家数。
+        返回 (up_limit_count, down_limit_count)。
+        """
+        def _extract_unique_codes(df: pd.DataFrame) -> set[str]:
+            if df is None or df.empty:
+                return set()
+            if "ts_code" not in df.columns:
+                return set()
+            codes = (
+                df["ts_code"]
+                .astype(str)
+                .str.strip()
+                .str.upper()
+            )
+            return set(codes.tolist())
+
+        td = _fmt(trade_date)
+
+        def _count_from_price_limits() -> tuple[int, int] | None:
+            """
+            备用口径：daily 收盘价命中 stk_limit 涨跌停价。
+            用于 limit_list_d 在代理网关下返回异常偏低时兜底。
+            """
+            try:
+                daily = self._daily_market(trade_date)
+                lim = self._limit_table(trade_date)
+            except Exception as exc:
+                logger.warning("[数据] 价格涨跌停兜底读取失败 trade_date=%s err=%s", td, exc)
+                return None
+            if daily is None or daily.empty or lim is None or lim.empty:
+                return None
+            if "ts_code" not in daily.columns or "ts_code" not in lim.columns:
+                return None
+            if "close" not in daily.columns or "up_limit" not in lim.columns or "down_limit" not in lim.columns:
+                return None
+            try:
+                merged = daily[["ts_code", "close"]].merge(
+                    lim[["ts_code", "up_limit", "down_limit"]],
+                    on="ts_code",
+                    how="inner",
+                )
+                if merged.empty:
+                    return None
+                close = pd.to_numeric(merged["close"], errors="coerce").round(2)
+                up_lim = pd.to_numeric(merged["up_limit"], errors="coerce").round(2)
+                down_lim = pd.to_numeric(merged["down_limit"], errors="coerce").round(2)
+                up = int((close == up_lim).sum())
+                down = int((close == down_lim).sum())
+                return up, down
+            except Exception as exc:
+                logger.warning("[数据] 价格涨跌停兜底计算失败 trade_date=%s err=%s", td, exc)
+                return None
+
+        def _collect(limit_type: str) -> set[str]:
+            try:
+                df_all = self._call(
+                    "limit_list_d",
+                    trade_date=td,
+                    limit_type=limit_type,
+                    fields="ts_code,trade_date",
+                )
+                codes_all = _extract_unique_codes(df_all)
+                raw_rows_all = 0 if df_all is None else int(len(df_all))
+                logger.warning(
+                    "[数据] limit_list_d type=%s trade_date=%s rows=%d uniq=%d",
+                    limit_type,
+                    td,
+                    raw_rows_all,
+                    len(codes_all),
+                )
+                return codes_all
+            except Exception as exc:
+                logger.warning(
+                    "[数据] limit_list_d(%s) 失败 trade_date=%s err=%s",
+                    limit_type,
+                    td,
+                    exc,
+                )
+            return set()
+
+        up_codes = _collect("U")
+        down_codes = _collect("D")
+        list_up = len(up_codes)
+        list_down = len(down_codes)
+        logger.warning(
+            "[数据] limit_list_d trade_date=%s final up=%d down=%d",
+            td,
+            list_up,
+            list_down,
+        )
+        fallback = _count_from_price_limits()
+        if fallback is None:
+            return list_up, list_down
+        price_up, price_down = fallback
+        logger.warning(
+            "[数据] limit_count_check trade_date=%s limit_list=(%d,%d) price_hit=(%d,%d)",
+            td,
+            list_up,
+            list_down,
+            price_up,
+            price_down,
+        )
+        # 代理/镜像数据源下，limit_list_d 可能明显偏低；此时切换到价格命中口径。
+        if (
+            (price_up > 0 and list_up < int(price_up * 0.9))
+            or (price_down > 0 and list_down < int(price_down * 0.9))
+        ):
+            logger.warning(
+                "[数据] limit_list_d 偏低，改用 price_hit 口径 trade_date=%s up=%d down=%d",
+                td,
+                price_up,
+                price_down,
+            )
+            return price_up, price_down
+        return list_up, list_down
 
 
 @lru_cache(maxsize=1)

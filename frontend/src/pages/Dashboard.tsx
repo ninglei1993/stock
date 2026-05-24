@@ -3,15 +3,10 @@ import { Link } from "react-router-dom";
 import { api, Dashboard as DashboardData } from "../api";
 import { pctClass, formatPct, STAGE_LABEL, ENV_CONCLUSION_LABEL } from "../utils";
 
-function formatYi(v: number): string {
-  if (!Number.isFinite(v)) return "0.0";
-  return v.toLocaleString("zh-CN", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-}
-
 function formatWanYi(v: number): string {
   if (!Number.isFinite(v)) return "0.00";
   const yi = v / 10000;
-  if (yi >= 1) return `${yi.toFixed(2)}万亿`;
+  if (Math.abs(yi) >= 1) return `${yi.toFixed(2)}万亿`;
   return `${v.toFixed(0)}亿`;
 }
 
@@ -41,19 +36,22 @@ export default function Dashboard() {
   const marketOverview = data?.market_overview;
   const displayDate = data?.trade_date;
   const indices = data?.indices || [];
+  const hasMarketData = indices.length > 0 || !!marketOverview;
 
   const dist = marketOverview?.distribution;
 
   const alignedBars = dist
     ? [
         { label: "跌停", count: dist.down_limit, color: "#22c55e" },
-        { label: "≤-7%", count: dist.neg_7_5, color: "#22c55e" },
-        { label: "-7~-5%", count: dist.neg_5_3, color: "#22c55e" },
-        { label: "-5~0%", count: dist.neg_3_0, color: "#22c55e" },
+        { label: "<-7%", count: dist.neg_7_plus, color: "#22c55e" },
+        { label: "-7~-5%", count: dist.neg_7_5, color: "#22c55e" },
+        { label: "-5~-3%", count: dist.neg_5_3, color: "#22c55e" },
+        { label: "-3~0%", count: dist.neg_3_0, color: "#22c55e" },
         { label: "平", count: dist.flat, color: "#94a3b8" },
         { label: "0~3%", count: dist.pos_0_3, color: "#ef4444" },
         { label: "3~5%", count: dist.pos_3_5, color: "#ef4444" },
         { label: "5~7%", count: dist.pos_5_7, color: "#ef4444" },
+        { label: "≥7%", count: dist.pos_7_plus, color: "#ef4444" },
         { label: "涨停", count: dist.up_limit, color: "#ef4444" },
       ]
     : [];
@@ -80,10 +78,10 @@ export default function Dashboard() {
 
       {error && <p className="error" style={{ marginBottom: "1rem" }}>{error}</p>}
 
-      {(!env && !marketOverview) && !error && (
+      {!hasMarketData && !env && !error && (
         <div className="card-glass" style={{ padding: "2rem", textAlign: "center" }}>
           <p style={{ color: "var(--muted)", fontSize: "1rem" }}>
-            暂无大盘数据，请先前往「扫盘」标签执行收盘扫描
+            暂无可展示的大盘数据，请稍后刷新重试
           </p>
         </div>
       )}
@@ -99,26 +97,28 @@ export default function Dashboard() {
                 padding: "1rem 1.1rem",
                 textAlign: "center",
                 borderRadius: "12px",
-                background: "linear-gradient(145deg, rgba(22,30,45,0.9), rgba(14,18,28,0.85))",
+                background: "linear-gradient(180deg, #fff7f7 0%, #fff1f1 100%)",
+                border: "1px solid #ffdcdc",
+                boxShadow: "0 8px 20px rgba(239,68,68,0.08)",
               }}
             >
-              <div style={{ fontSize: "0.85rem", color: "var(--muted)", marginBottom: "0.35rem" }}>{idx.name}</div>
+              <div style={{ fontSize: "1.35rem", color: "#111827", fontWeight: 700, marginBottom: "0.35rem" }}>{idx.name}</div>
               <div
                 style={{
-                  fontSize: "1.55rem",
+                  fontSize: "3rem",
                   fontWeight: 700,
                   lineHeight: 1.2,
-                  color: idx.pct_change > 0 ? "var(--up)" : idx.pct_change < 0 ? "var(--down)" : "var(--text)",
+                  color: idx.pct_change > 0 ? "#ef4444" : idx.pct_change < 0 ? "#16a34a" : "#111827",
                 }}
               >
                 {idx.close.toFixed(2)}
               </div>
               <div
                 style={{
-                  fontSize: "0.8rem",
+                  fontSize: "1.35rem",
                   marginTop: "0.3rem",
-                  color: idx.pct_change > 0 ? "var(--up)" : idx.pct_change < 0 ? "var(--down)" : "var(--muted)",
-                  fontWeight: 500,
+                  color: idx.pct_change > 0 ? "#ef4444" : idx.pct_change < 0 ? "#16a34a" : "#374151",
+                  fontWeight: 600,
                 }}
               >
                 {idx.pct_change > 0 ? "+" : ""}
@@ -131,25 +131,36 @@ export default function Dashboard() {
 
       {/* 市场总览 */}
       {(env || marketOverview) && (
-        <div className="card-glass" style={{ padding: "1rem 1.1rem", marginBottom: "1rem" }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: "0.75rem", marginBottom: "0.9rem", flexWrap: "wrap" }}>
-            <span style={{ fontSize: "1rem", fontWeight: 700 }}>市场总览</span>
+        <div
+          className="card-glass"
+          style={{
+            padding: "1rem 1.1rem",
+            marginBottom: "1rem",
+            background: "linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)",
+            border: "1px solid #e2e8f0",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "baseline", gap: "0.9rem", marginBottom: "0.9rem", flexWrap: "wrap" }}>
+            <span style={{ fontSize: "2rem", fontWeight: 700, color: "#111827" }}>市场总览</span>
             {marketOverview && (
               <>
-                <span style={{ fontSize: "0.85rem", color: "var(--muted)" }}>
-                  总成交额 {formatWanYi((marketOverview.total_turnover_yi || 0) * 10000)}
+                <span style={{ fontSize: "1.6rem", color: "#374151", fontWeight: 500 }}>
+                  总成交额
+                  <span style={{ marginLeft: "0.25rem", color: "#111827", fontWeight: 700 }}>
+                    {formatWanYi(marketOverview.total_turnover_yi || 0)}
+                  </span>
                 </span>
-                <span style={{ fontSize: "0.85rem", color: "var(--muted)" }}>
-                  较昨日
+                <span style={{ fontSize: "1.6rem", color: "#374151", fontWeight: 500 }}>
+                  较昨日此时
                   <span
                     style={{
-                      color: (marketOverview.turnover_delta_yi || 0) > 0 ? "var(--up)" : (marketOverview.turnover_delta_yi || 0) < 0 ? "var(--down)" : "var(--muted)",
-                      fontWeight: 600,
+                      color: (marketOverview.turnover_delta_yi || 0) > 0 ? "#ef4444" : (marketOverview.turnover_delta_yi || 0) < 0 ? "#16a34a" : "#6b7280",
+                      fontWeight: 700,
                       marginLeft: "0.25rem",
                     }}
                   >
                     {(marketOverview.turnover_delta_yi || 0) > 0 ? "+" : ""}
-                    {formatWanYi((marketOverview.turnover_delta_yi || 0) * 10000)}
+                    {formatWanYi(marketOverview.turnover_delta_yi || 0)}
                   </span>
                 </span>
               </>

@@ -121,6 +121,7 @@ export interface Dashboard {
     limit_up_count: number;
     distribution?: {
       down_limit: number;
+      neg_7_plus: number;
       neg_7_5: number;
       neg_5_3: number;
       neg_3_0: number;
@@ -128,6 +129,7 @@ export interface Dashboard {
       pos_0_3: number;
       pos_3_5: number;
       pos_5_7: number;
+      pos_7_plus: number;
       up_limit: number;
     };
   } | null;

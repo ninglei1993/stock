@@ -57,6 +57,7 @@ class IndexBar:
     close: float
     high: float
     low: float
+    pre_close: Optional[float] = None
     pct_change: float = 0.0
 
 

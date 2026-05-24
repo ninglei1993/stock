@@ -1,3 +1,4 @@
+import asyncio
 from datetime import date, timedelta
 import time
 from typing import Any, Optional
@@ -360,16 +361,18 @@ def _resolve_dashboard_snapshot():
 
 
 async def _latest_trade_date(session: AsyncSession) -> Optional[date]:
-    snap = _resolve_dashboard_snapshot()
-    if snap is not None:
-        return snap.trade_date
-
     row_db = (
         await session.execute(
             select(SectorScoreDaily.trade_date).order_by(desc(SectorScoreDaily.trade_date)).limit(1)
         )
     ).scalar_one_or_none()
-    return row_db
+    try:
+        completed = latest_completed_trade_day()
+    except Exception:
+        completed = None
+    if row_db is not None and completed is not None:
+        return row_db if row_db >= completed else completed
+    return row_db or completed
 
 
 def _normalize_requested_trade_date(trade_date: Optional[date]) -> Optional[date]:
@@ -1038,38 +1041,36 @@ def _fetch_index_summaries(adapter, td: date) -> list[dict[str, Any]]:
         ("000300.SH", "沪深300"),
     ]
     out: list[dict[str, Any]] = []
-    start = td - timedelta(days=7)
+    # 使用更长回看窗口，确保长假后也能拿到“上一交易日”收盘对比基准。
+    start = td - timedelta(days=40)
     for code, name in codes:
         try:
             bars = adapter.get_index_bars(code, start, td)
         except Exception:
             continue
         bars = sorted([b for b in bars if b.trade_date <= td], key=lambda x: x.trade_date)
-        if len(bars) >= 2:
-            today = bars[-1]
-            prev = bars[-2]
-            out.append(
-                {
-                    "code": code,
-                    "name": name,
-                    "close": round(today.close, 2),
-                    "pre_close": round(prev.close, 2),
-                    "pct_change": round(today.pct_change, 2),
-                    "point_change": round(today.close - prev.close, 2),
-                }
+        if not bars:
+            continue
+        today = bars[-1]
+        prev_close = float(getattr(today, "pre_close", 0.0) or 0.0)
+        if prev_close <= 0 and len(bars) >= 2:
+            prev_close = float(bars[-2].close or 0.0)
+        if prev_close <= 0:
+            prev_close = (
+                today.close / (1.0 + (today.pct_change / 100.0))
+                if abs(today.pct_change) > 1e-9
+                else today.close
             )
-        elif len(bars) == 1:
-            today = bars[-1]
-            out.append(
-                {
-                    "code": code,
-                    "name": name,
-                    "close": round(today.close, 2),
-                    "pre_close": round(today.close, 2),
-                    "pct_change": round(today.pct_change, 2),
-                    "point_change": 0.0,
-                }
-            )
+        out.append(
+            {
+                "code": code,
+                "name": name,
+                "close": round(today.close, 2),
+                "pre_close": round(prev_close, 2),
+                "pct_change": round(today.pct_change, 2),
+                "point_change": round(today.close - prev_close, 2),
+            }
+        )
     return out
 
 
@@ -1080,13 +1081,46 @@ async def dashboard(
     def _market_overview_from_cache(anchor: date, limit_up_count: int) -> Optional[dict]:
         from app.services.market_cache import MarketTable, get_market_cache
 
+        def _is_a_share_code(ts_code: str) -> bool:
+            c = str(ts_code or "").strip().upper()
+            if len(c) < 3 or "." not in c:
+                return False
+            num, suffix = c.split(".", 1)
+            if suffix == "SH":
+                return num.startswith("6")
+            if suffix == "SZ":
+                return num.startswith(("0", "3"))
+            if suffix == "BJ":
+                return True
+            return False
+
+        def _apply_a_share_filter(src: pd.DataFrame) -> pd.DataFrame:
+            if src is None or src.empty:
+                return src
+            if "ts_code" not in src.columns:
+                return src
+            mask = src["ts_code"].astype(str).map(_is_a_share_code)
+            return src[mask].copy()
+
+        store = get_market_cache()
+        adapter = None
         try:
-            df = get_market_cache().load(MarketTable.DAILY, anchor)
+            df = store.load(MarketTable.DAILY, anchor)
         except Exception:
-            return None
+            df = None
+        if df is None or df.empty:
+            try:
+                adapter = get_adapter()
+                if hasattr(adapter, "_daily_market"):
+                    df = adapter._daily_market(anchor)  # type: ignore[attr-defined]
+            except Exception:
+                df = None
         if df is None or df.empty:
             return None
         if not {"close", "pre_close", "amount"}.issubset(set(df.columns)):
+            return None
+        df = _apply_a_share_filter(df)
+        if df.empty:
             return None
         pre = pd.to_numeric(df["pre_close"], errors="coerce")
         close = pd.to_numeric(df["close"], errors="coerce")
@@ -1097,13 +1131,78 @@ async def dashboard(
         up_count = int((pct > 0).sum())
         down_count = int((pct < 0).sum())
         flat_count = int((pct == 0).sum())
+
+        # 涨跌停逐股口径：由 close 命中涨跌停价判定，并与涨跌幅分箱保持一致。
+        up_limit_flag = pd.Series(False, index=df.index)
+        down_limit_flag = pd.Series(False, index=df.index)
+        try:
+            lim_df = store.load(MarketTable.LIMIT, anchor)
+        except Exception:
+            lim_df = None
+        if (lim_df is None or lim_df.empty) and adapter is not None:
+            try:
+                if hasattr(adapter, "_limit_table"):
+                    lim_df = adapter._limit_table(anchor)  # type: ignore[attr-defined]
+            except Exception:
+                lim_df = None
+        if lim_df is not None and not lim_df.empty and {"ts_code", "up_limit", "down_limit"}.issubset(set(lim_df.columns)):
+            lim_sub = _apply_a_share_filter(lim_df)[["ts_code", "up_limit", "down_limit"]].copy()
+            if "ts_code" in df.columns and not lim_sub.empty:
+                merged = df[["ts_code"]].merge(lim_sub, on="ts_code", how="left")
+                up_lim = pd.to_numeric(merged["up_limit"], errors="coerce").round(2)
+                down_lim = pd.to_numeric(merged["down_limit"], errors="coerce").round(2)
+                close_round = close.round(2)
+                up_limit_flag = (close_round == up_lim) & up_lim.notna()
+                down_limit_flag = (close_round == down_lim) & down_lim.notna()
+        up_limit_count = int(up_limit_flag.sum())
+        down_limit_count = int(down_limit_flag.sum())
+        if up_limit_count == 0 and down_limit_count == 0:
+            # 兜底：当 limit 表不可用时，回落到适配器统计口径。
+            try:
+                adapter = adapter or get_adapter()
+                real_up, real_down = adapter.get_limit_counts(anchor)  # type: ignore[attr-defined]
+                up_limit_count = int(real_up or 0)
+                down_limit_count = int(real_down or 0)
+            except Exception:
+                pass
         turnover_delta = 0.0
         try:
-            store = get_market_cache()
             days = [d for d in store.list_trade_days() if d < anchor]
-            if days:
-                prev_df = store.load(MarketTable.DAILY, days[-1])
+            prev_day = days[-1] if days else None
+            prev_df = None
+            if prev_day is None:
+                # 本地离线兜底：manifest 可能滞后，尝试直接从磁盘日线中回溯上一交易日。
+                for i in range(1, 15):
+                    cand = anchor - timedelta(days=i)
+                    try:
+                        cand_df = store.load(MarketTable.DAILY, cand)
+                    except Exception:
+                        cand_df = None
+                    if cand_df is not None and not cand_df.empty:
+                        prev_day = cand
+                        prev_df = cand_df
+                        break
+            if prev_day is None:
+                try:
+                    adapter = get_adapter()
+                    history_days = adapter.get_trade_days(anchor - timedelta(days=20), anchor)
+                    prior_days = [d for d in history_days if d < anchor]
+                    prev_day = prior_days[-1] if prior_days else None
+                except Exception:
+                    prev_day = None
+
+            if prev_day is not None:
+                if prev_df is None:
+                    prev_df = store.load(MarketTable.DAILY, prev_day)
+                if prev_df is None or prev_df.empty:
+                    try:
+                        adapter = adapter or get_adapter()
+                        if hasattr(adapter, "_daily_market"):
+                            prev_df = adapter._daily_market(prev_day)  # type: ignore[attr-defined]
+                    except Exception:
+                        prev_df = None
                 if prev_df is not None and not prev_df.empty and "amount" in prev_df.columns:
+                    prev_df = _apply_a_share_filter(prev_df)
                     prev_amount = pd.to_numeric(prev_df["amount"], errors="coerce").fillna(0.0)
                     turnover_delta = round(float((amount.sum() - prev_amount.sum()) / 1e5), 2)
         except Exception:
@@ -1114,29 +1213,34 @@ async def dashboard(
             "up_count": up_count,
             "down_count": down_count,
             "flat_count": flat_count,
-            "limit_up_count": int(limit_up_count or 0),
+            "limit_up_count": up_limit_count,
             "distribution": {
-                "down_limit": int((pct <= -9.8).sum()),
-                "neg_7_5": int(((pct > -9.8) & (pct <= -7)).sum()),
-                "neg_5_3": int(((pct > -7) & (pct <= -5)).sum()),
-                "neg_3_0": int(((pct > -5) & (pct < 0)).sum()),
+                "down_limit": down_limit_count,
+                "neg_7_plus": int(((pct <= -7) & (~down_limit_flag)).sum()),
+                "neg_7_5": int(((pct > -7) & (pct <= -5) & (~down_limit_flag)).sum()),
+                "neg_5_3": int(((pct > -5) & (pct <= -3) & (~down_limit_flag)).sum()),
+                "neg_3_0": int(((pct > -3) & (pct < 0) & (~down_limit_flag)).sum()),
                 "flat": flat_count,
-                "pos_0_3": int(((pct > 0) & (pct < 3)).sum()),
-                "pos_3_5": int(((pct >= 3) & (pct < 5)).sum()),
-                "pos_5_7": int(((pct >= 5) & (pct < 7)).sum()),
-                "up_limit": int((pct >= 9.8).sum()),
+                "pos_0_3": int(((pct > 0) & (pct < 3) & (~up_limit_flag)).sum()),
+                "pos_3_5": int(((pct >= 3) & (pct < 5) & (~up_limit_flag)).sum()),
+                "pos_5_7": int(((pct >= 5) & (pct < 7) & (~up_limit_flag)).sum()),
+                "pos_7_plus": int(((pct >= 7) & (~up_limit_flag)).sum()),
+                "up_limit": up_limit_count,
             },
         }
 
-    td = _normalize_requested_trade_date(trade_date) or await _latest_trade_date(db)
+    requested_td = _normalize_requested_trade_date(trade_date)
+    td = requested_td or await _latest_trade_date(db)
     if not td:
         return DashboardOut(trade_date=None, market_env=None, top_sectors=[])
 
     snap = _resolve_dashboard_snapshot()
-    if snap:
+    # 默认仪表盘必须走“最新交易日实时数据”口径，不依赖扫盘快照；
+    # 仅在用户显式指定 trade_date 时，才允许读取历史快照。
+    if snap and requested_td is not None:
         snap_td = snap.trade_date
         snap_days = list(snap.scan_trade_days) if snap.scan_trade_days else []
-        use_snap = td == snap_td or (snap_days and td in snap_days) or td is None
+        use_snap = td == snap_td or (snap_days and td in snap_days)
         if use_snap:
             anchor = snap_td or td
             env_out = MarketEnvOut.model_validate(snap.env) if snap.env else None
