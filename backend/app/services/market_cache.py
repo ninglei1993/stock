@@ -78,11 +78,23 @@ class MarketCacheStore:
     def __init__(self, root: Path | None = None) -> None:
         self.root = root or market_root()
 
+    def _daily_rows_count(self, trade_date: date) -> int:
+        path = self._path(MarketTable.DAILY, trade_date)
+        if not path.is_file():
+            return 0
+        try:
+            with open(path, encoding="utf-8") as f:
+                payload = json.load(f)
+            rows = payload.get("rows") or []
+            return len(rows) if isinstance(rows, list) else 0
+        except (OSError, json.JSONDecodeError, TypeError):
+            return 0
+
     def _path(self, table: MarketTable, trade_date: date) -> Path:
         return self.root / table.value / f"{_fmt(trade_date)}.json"
 
     def has_day(self, trade_date: date) -> bool:
-        return all(self._path(t, trade_date).is_file() for t in _ALL_TABLES)
+        return all(self._path(t, trade_date).is_file() for t in _ALL_TABLES) and self._daily_rows_count(trade_date) > 0
 
     def has_table(self, table: MarketTable, trade_date: date) -> bool:
         return self._path(table, trade_date).is_file()
@@ -119,10 +131,38 @@ class MarketCacheStore:
         days: list[date] = []
         for s in manifest.get("trade_days") or []:
             try:
-                days.append(date.fromisoformat(s))
+                d = date.fromisoformat(s)
+                if self._daily_rows_count(d) > 0:
+                    days.append(d)
             except ValueError:
                 continue
-        return sorted(days)
+        day_set = set(days)
+
+        # manifest 可能滞后；从 daily 目录文件名兜底恢复交易日。
+        daily_dir = self.root / MarketTable.DAILY.value
+        if daily_dir.is_dir():
+            for p in daily_dir.glob("*.json"):
+                stem = p.stem
+                if len(stem) != 8 or not stem.isdigit():
+                    continue
+                try:
+                    d = _parse_day(stem)
+                    if self._daily_rows_count(d) > 0:
+                        day_set.add(d)
+                except Exception:
+                    continue
+        merged = sorted(day_set)
+
+        # 自动修复 manifest，避免后续流程继续读到过时交易日集合。
+        manifest_days = sorted(days)
+        if merged and manifest_days != merged:
+            repaired = {
+                "version": MANIFEST_VERSION,
+                "trade_days": [d.isoformat() for d in merged],
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            _atomic_write_json(self.root / "manifest.json", repaired)
+        return merged
 
     def _read_manifest(self) -> dict[str, Any]:
         path = self.root / "manifest.json"

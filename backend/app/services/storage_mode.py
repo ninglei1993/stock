@@ -1,4 +1,7 @@
-"""扫盘与行情持久化模式（文件 / 内存 / PostgreSQL）。"""
+"""扫盘与行情持久化模式（文件 / 内存）。
+
+扫盘数据始终走内存缓冲 + 文件快照，不再写入 PostgreSQL 扫盘表。
+"""
 
 from __future__ import annotations
 
@@ -12,9 +15,9 @@ def uses_file_scan_storage() -> bool:
 
 def uses_scan_memory_buffer() -> bool:
     """扫盘中间态仅存进程内存（不写 PG 扫盘表）。"""
-    return settings.scan_volatile_storage or uses_file_scan_storage()
+    return True
 
 
 def persist_scan_to_postgres() -> bool:
-    """是否将扫盘结果写入 PostgreSQL。"""
-    return not uses_scan_memory_buffer()
+    """是否将扫盘结果写入 PostgreSQL（已禁用）。"""
+    return False

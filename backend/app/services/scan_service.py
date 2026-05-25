@@ -1,11 +1,10 @@
 from datetime import date, timedelta
 
-from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.services.storage_mode import persist_scan_to_postgres, uses_scan_memory_buffer
-from app.models.tables import Alert, SectorScoreDaily
+from app.services.storage_mode import uses_scan_memory_buffer
+from app.models.tables import SectorScoreDaily
 from app.services.alert_service import AlertService
 from app.services.volatile_merge import (
     get_market_env_merged,
@@ -138,30 +137,17 @@ class ScanService:
             reverse=True,
         )
         max_streak_map: dict[str, int] = {}
-        if uses_scan_memory_buffer():
-            from app.services.volatile_scan import get_today_buffer
+        from app.services.volatile_scan import get_today_buffer
 
-            buf = get_today_buffer()
-            stocks = list(buf.stocks) if buf else []
-            for s in stocks:
-                if getattr(s, "trade_date", None) != trade_date:
-                    continue
-                code = getattr(s, "sector_code", "")
-                streak = int(getattr(s, "limit_up_streak", 0) or 0)
-                if streak > max_streak_map.get(code, 0):
-                    max_streak_map[code] = streak
-        elif persist_scan_to_postgres():
-            from app.models.tables import StockDaily
-
-            rows = (
-                await self.session.execute(
-                    select(StockDaily).where(StockDaily.trade_date == trade_date)
-                )
-            ).scalars().all()
-            for s in rows:
-                streak = int(getattr(s, "limit_up_streak", 0) or 0)
-                if streak > max_streak_map.get(s.sector_code, 0):
-                    max_streak_map[s.sector_code] = streak
+        buf = get_today_buffer()
+        stocks = list(buf.stocks) if buf else []
+        for s in stocks:
+            if getattr(s, "trade_date", None) != trade_date:
+                continue
+            code = getattr(s, "sector_code", "")
+            streak = int(getattr(s, "limit_up_streak", 0) or 0)
+            if streak > max_streak_map.get(code, 0):
+                max_streak_map[code] = streak
 
         manual_inputs = get_manual_inputs_for_day(trade_date) if self.scoring_mode == "a_strategy" else {}
         adapter = get_adapter() if self.scoring_mode == "a_strategy" else None
@@ -171,18 +157,9 @@ class ScanService:
 
         prev_score_map: dict[str, ScoreResult] = {}
         prev_rows: list = []
-        if uses_scan_memory_buffer():
-            from app.services.volatile_scan import get_today_buffer
-
-            buf = get_today_buffer()
-            if buf and yesterday in buf.scores_by_date:
-                prev_rows = list(buf.scores_by_date[yesterday])
-        elif persist_scan_to_postgres():
-            prev_rows = (
-                await self.session.execute(
-                    select(SectorScoreDaily).where(SectorScoreDaily.trade_date == yesterday)
-                )
-            ).scalars().all()
+        buf = get_today_buffer()
+        if buf and yesterday in buf.scores_by_date:
+            prev_rows = list(buf.scores_by_date[yesterday])
         for r in prev_rows:
             prev_score_map[r.sector_code] = ScoreResult(
                 sector_code=r.sector_code,
@@ -251,11 +228,6 @@ class ScanService:
         use_explicit, _ = read_scan_sectors_selection()
         ranked = self.engine.rank_sectors(results, keep_all=use_explicit)
 
-        if persist_scan_to_postgres():
-            await self.session.execute(
-                delete(SectorScoreDaily).where(SectorScoreDaily.trade_date == trade_date)
-            )
-
         today_map = {r.sector_code: r for r in ranked}
         saved: list[SectorScoreDaily] = []
         for i, sr in enumerate(ranked):
@@ -283,8 +255,6 @@ class ScanService:
                 source_tag=sr.source_tag,
             )
             saved.append(row)
-            if persist_scan_to_postgres():
-                self.session.add(row)
 
         env_bad = False
         if env_row:
@@ -296,20 +266,9 @@ class ScanService:
             trade_date, today_map, prev_score_map, env_bad=env_bad
         )
 
-        if persist_scan_to_postgres():
-            await self.session.execute(delete(Alert).where(Alert.trade_date == trade_date))
-            for a in alert_items:
-                self.session.add(Alert(**a))
-            await self.session.flush()
-
-        if uses_scan_memory_buffer():
-            from app.services.volatile_scan import get_today_buffer
-
-            buf = get_today_buffer()
-            if buf is not None:
-                # 回测主线轮动会按交易日从 scores_by_date 读取评分。
-                # 内存模式下这里必须回填当日评分，否则回测池为空、不会触发买卖。
-                buf.scores_by_date[trade_date] = list(saved)
+        buf = get_today_buffer()
+        if buf is not None:
+            buf.scores_by_date[trade_date] = list(saved)
 
         logger.info(
             "[数据] ScanService.run_scan 完成 trade_date=%s sectors_scored=%d alerts=%d memory_buffer=%s",

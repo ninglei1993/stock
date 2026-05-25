@@ -46,7 +46,8 @@ def effective_max_stocks_per_concept() -> int:
     override = read_max_stocks_override()
     if override is not None:
         return override
-    return max(0, settings.ingest_max_stocks_per_concept)
+    # 默认始终走“全成分股”；只有用户显式在仪表盘设置后才按覆盖值限制。
+    return 0
 
 
 def _read_override_blob() -> dict:
@@ -86,4 +87,33 @@ def write_scan_sectors_selection(
     data = _read_override_blob()
     data["use_explicit_sector_selection"] = use_explicit_selection
     data["selected_sector_codes"] = [str(c).strip() for c in selected_codes if str(c).strip()]
+    _write_override_blob(data)
+
+
+def read_scan_history() -> list[dict]:
+    """读取历史勾选记录列表，每条记录包含 label, codes, saved_at。"""
+    raw = _read_override_blob()
+    history = raw.get("scan_history")
+    if not isinstance(history, list):
+        return []
+    return [h for h in history if isinstance(h, dict)]
+
+
+def append_scan_history(label: str, codes: list[str]) -> None:
+    """追加一条勾选历史（最多保留10条）。"""
+    from datetime import datetime, timezone
+
+    data = _read_override_blob()
+    history = data.get("scan_history")
+    if not isinstance(history, list):
+        history = []
+    entry = {
+        "label": label,
+        "codes": [str(c).strip() for c in codes if str(c).strip()],
+        "saved_at": datetime.now(timezone.utc).isoformat(),
+    }
+    history.append(entry)
+    if len(history) > 10:
+        history = history[-10:]
+    data["scan_history"] = history
     _write_override_blob(data)

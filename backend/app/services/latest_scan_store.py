@@ -74,6 +74,8 @@ class LoadedLatestScan:
     scores: list[LoadedScore]
     leader_map: dict[str, LoadedLeader]
     saved_at: Optional[str] = None
+    sector_dailies: dict[str, dict] = field(default_factory=dict)
+    sector_flows: dict[str, dict] = field(default_factory=dict)
 
 
 def scan_latest_path() -> Path:
@@ -151,6 +153,30 @@ def _env_to_dict(env: Any) -> Optional[dict[str, Any]]:
     }
 
 
+def _sector_daily_to_dict(row: Any) -> dict[str, Any]:
+    if isinstance(row, dict):
+        return row
+    return {
+        "pct_change": float(getattr(row, "pct_change", 0) or 0),
+        "limit_up_count": int(getattr(row, "limit_up_count", 0) or 0),
+        "big_yang_count": int(getattr(row, "big_yang_count", 0) or 0),
+        "up_count": int(getattr(row, "up_count", 0) or 0),
+        "total_count": int(getattr(row, "total_count", 0) or 0),
+        "blow_up_rate": float(getattr(row, "blow_up_rate", 0) or 0),
+        "money": float(getattr(row, "money", 0) or 0),
+        "close": float(getattr(row, "close", 0) or 0),
+    }
+
+
+def _sector_flow_to_dict(row: Any) -> dict[str, Any]:
+    if isinstance(row, dict):
+        return row
+    return {
+        "net_inflow_main": float(getattr(row, "net_inflow_main", 0) or 0),
+        "inflow_days": int(getattr(row, "inflow_days", 0) or 0),
+    }
+
+
 def _parse_date(v: Any) -> Optional[date]:
     if v is None:
         return None
@@ -171,6 +197,8 @@ class LatestScanStore:
         scan_start_date: Optional[date] = None,
         scan_end_date: Optional[date] = None,
         market_cache_stats: Optional[dict[str, int]] = None,
+        sector_dailies: dict[str, Any] | None = None,
+        sector_flows: dict[str, Any] | None = None,
     ) -> Path:
         leaders_ser = {code: _leader_to_dict(l) for code, l in leader_map.items()}
         payload: dict[str, Any] = {
@@ -182,6 +210,8 @@ class LatestScanStore:
             "market_env": _env_to_dict(market_env),
             "scores": [_score_to_dict(s) for s in scores],
             "leaders": leaders_ser,
+            "sector_dailies": {code: _sector_daily_to_dict(d) for code, d in (sector_dailies or {}).items()},
+            "sector_flows": {code: _sector_flow_to_dict(f) for code, f in (sector_flows or {}).items()},
             "saved_at": datetime.now(timezone.utc).isoformat(),
         }
         if market_cache_stats:
@@ -270,6 +300,16 @@ class LatestScanStore:
                 money=float(l.get("money", 0) or 0),
             )
 
+        sector_dailies = {}
+        for code, d in (raw.get("sector_dailies") or {}).items():
+            if isinstance(d, dict):
+                sector_dailies[code] = d
+
+        sector_flows = {}
+        for code, f in (raw.get("sector_flows") or {}).items():
+            if isinstance(f, dict):
+                sector_flows[code] = f
+
         return LoadedLatestScan(
             trade_date=td,
             scan_start_date=_parse_date(raw.get("scan_start_date")),
@@ -279,6 +319,8 @@ class LatestScanStore:
             scores=scores,
             leader_map=leader_map,
             saved_at=raw.get("saved_at"),
+            sector_dailies=sector_dailies,
+            sector_flows=sector_flows,
         )
 
     @staticmethod
@@ -312,6 +354,8 @@ class LatestScanStore:
                 scores=loaded.scores,
                 leader_map=loaded.leader_map,
                 scan_trade_days=loaded.trade_days,
+                sector_dailies=loaded.sector_dailies,
+                sector_flows=loaded.sector_flows,
             )
         )
         logger.info("[latest_scan] 已从磁盘恢复仪表盘 trade_date=%s", loaded.trade_date)

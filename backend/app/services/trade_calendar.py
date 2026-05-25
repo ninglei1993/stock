@@ -198,7 +198,7 @@ def resolve_scan_trade_days(
     # 用户明确选择的日历区间：直接查 trade_cal，勿用 resolve_scan_date 单点对齐
     days = sorted(adapter.get_trade_days(start, end))
     if not days:
-        # 先尝试用本地 market cache 的交易日清单恢复区间，避免误降级成 1 日。
+        # 先尝试用本地 market cache 的交易日清单恢复区间。
         cache_days: list[date] = []
         if settings.market_cache_enabled:
             try:
@@ -209,15 +209,25 @@ def resolve_scan_trade_days(
                 ]
             except Exception:
                 cache_days = []
-        if cache_days:
+        # 再用“工作日近似”补齐区间，避免 UI 只显示 1~3 天任务。
+        approx_days: list[date] = []
+        cur = start
+        while cur <= end:
+            if cur.weekday() < 5:
+                approx_days.append(cur)
+            cur += timedelta(days=1)
+        merged_days = sorted(set(cache_days) | set(approx_days))
+        if merged_days:
             if not quiet:
                 log.warning(
-                    "[流程] trade_cal 区间无结果，改用本地缓存交易日 %s ~ %s 共 %d 日",
-                    cache_days[0],
-                    cache_days[-1],
+                    "[流程] trade_cal 区间无结果，回退区间任务日 %s ~ %s 共 %d 日（cache=%d, weekday=%d）",
+                    merged_days[0],
+                    merged_days[-1],
+                    len(merged_days),
                     len(cache_days),
+                    len(approx_days),
                 )
-            return cache_days
+            return merged_days
         # 仍无可用区间时，再回退到单日对齐，避免用户被硬错误阻断。
         fallback_day = resolve_scan_date(end)
         if not quiet:

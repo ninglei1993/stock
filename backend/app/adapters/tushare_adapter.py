@@ -311,6 +311,45 @@ class TushareAdapter(MarketDataAdapter):
                 continue
         return out
 
+    @staticmethod
+    def _member_disk_cache_path(concept_code: str):
+        from pathlib import Path
+        safe = concept_code.replace("/", "_").replace("\\", "_")
+        return Path(settings.data_dir) / "cache" / "members" / f"{safe}.json"
+
+    @staticmethod
+    def _load_member_disk_cache(concept_code: str) -> list[str] | None:
+        import json
+        path = TushareAdapter._member_disk_cache_path(concept_code)
+        if not path.is_file():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            codes = data.get("codes", [])
+            if codes:
+                return codes
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _save_member_disk_cache(concept_code: str, codes: list[str]) -> None:
+        import json
+        from datetime import datetime
+        if not codes:
+            return
+        path = TushareAdapter._member_disk_cache_path(concept_code)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps({"code": concept_code, "count": len(codes), "codes": codes,
+                            "updated_at": datetime.utcnow().isoformat() + "Z"},
+                           ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+
     def get_concept_stocks(self, concept_code: str, trade_date: date) -> list[str]:
         if concept_code in TushareAdapter._member_cache:
             cached = TushareAdapter._member_cache[concept_code]
@@ -403,9 +442,25 @@ class TushareAdapter(MarketDataAdapter):
                     break
         except Exception as exc:
             logger.warning("[数据] get_concept_stocks 调用失败 concept=%s: %s", concept_code, exc)
+            disk = self._load_member_disk_cache(concept_code)
+            if disk:
+                logger.warning(
+                    "[数据] get_concept_stocks API 异常，回退磁盘缓存 concept=%s count=%d",
+                    concept_code, len(disk),
+                )
+                TushareAdapter._member_cache[concept_code] = disk
+                return list(disk)
             return []
         if df.empty:
-            logger.warning("[数据] get_concept_stocks 无成分 concept=%s", concept_code)
+            disk = self._load_member_disk_cache(concept_code)
+            if disk:
+                logger.warning(
+                    "[数据] get_concept_stocks API 返回空，回退磁盘缓存 concept=%s count=%d",
+                    concept_code, len(disk),
+                )
+                TushareAdapter._member_cache[concept_code] = disk
+                return list(disk)
+            logger.warning("[数据] get_concept_stocks 无成分 concept=%s（无磁盘缓存）", concept_code)
             return []
         col = _infer_member_col(df) or ("code" if "code" in df.columns else None)
         if not col:
@@ -416,9 +471,9 @@ class TushareAdapter(MarketDataAdapter):
             )
             return []
         codes = [normalize_stock_code(str(c)) for c in df[col].dropna().unique()]
-        # 兜底过滤：忽略明显的概念编码/异常值
         codes = [c for c in codes if c and not str(c).upper().endswith(".TI")]
         TushareAdapter._member_cache[concept_code] = codes
+        self._save_member_disk_cache(concept_code, codes)
         logger.info(
             "[数据] get_concept_stocks concept=%s col=%s count=%d",
             concept_code,

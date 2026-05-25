@@ -334,6 +334,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  getScanHistory: () =>
+    fetchJson<{ history: Array<{ label: string; codes: string[]; saved_at: string }> }>(
+      "/system/scan-history"
+    ),
+  saveScanHistory: (label: string, codes: string[]) =>
+    fetchJson<{ message: string; label: string; count: number }>("/system/scan-history", {
+      method: "POST",
+      body: JSON.stringify({ label, codes }),
+    }),
   listConcepts: () => fetchJson<ConceptItem[]>("/concepts"),
   setIngestSettings: (maxStocksPerConcept: number | null) =>
     fetchJson<{ message: string; ingest_max_stocks_per_concept: number }>(

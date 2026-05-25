@@ -10,6 +10,27 @@ _PROJECT_ROOT = _BACKEND_DIR.parent
 _PLACEHOLDER_TOKENS = frozenset({"", "your_tushare_token"})
 
 
+def _read_tushare_token_fallback() -> str:
+    """
+    本地兜底读取 token（仅当环境变量未设置时生效）。
+    支持项目根目录 tk.csv：
+      token
+      <actual_token>
+    """
+    p = _PROJECT_ROOT / "tk.csv"
+    if not p.is_file():
+        return ""
+    try:
+        lines = [ln.strip() for ln in p.read_text(encoding="utf-8").splitlines()]
+    except OSError:
+        return ""
+    for ln in lines:
+        if not ln or ln.lower() == "token":
+            continue
+        return ln
+    return ""
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=(
@@ -35,7 +56,7 @@ class Settings(BaseSettings):
     ingest_flow_lookback_days: int = 3
     scan_hour: int = 15
     scan_minute: int = 10
-    tushare_token: str = ""
+    tushare_token: str = _read_tushare_token_fallback()
     # 第三方 Tushare 代理地址（留空则用官方 api.waditu.com）
     tushare_api_url: str = ""
     tushare_rate_limit: float = 170.0

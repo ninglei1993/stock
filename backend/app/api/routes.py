@@ -357,6 +357,8 @@ def _resolve_dashboard_snapshot():
         scores=loaded.scores,
         leader_map=loaded.leader_map,
         scan_trade_days=loaded.trade_days,
+        sector_dailies=loaded.sector_dailies,
+        sector_flows=loaded.sector_flows,
     )
     set_dashboard_snapshot(snap)
     return snap
@@ -373,7 +375,9 @@ async def _latest_trade_date(session: AsyncSession) -> Optional[date]:
     except Exception:
         completed = None
     if row_db is not None and completed is not None:
-        return row_db if row_db >= completed else completed
+        if row_db > completed:
+            return completed
+        return row_db
     return row_db or completed
 
 
@@ -564,6 +568,23 @@ async def set_scan_sectors(body: SetScanSectorsIn):
     }
 
 
+@router.get("/system/scan-history")
+async def get_scan_history():
+    from app.services.ingest_settings_store import read_scan_history
+
+    return {"history": read_scan_history()}
+
+
+@router.post("/system/scan-history")
+async def save_scan_history(body: dict):
+    from app.services.ingest_settings_store import append_scan_history
+
+    label = str(body.get("label", "")).strip() or "未命名"
+    codes = body.get("codes", [])
+    if not isinstance(codes, list) or not codes:
+        raise HTTPException(400, "codes 不能为空")
+    append_scan_history(label, codes)
+    return {"message": "已保存历史勾选", "label": label, "count": len(codes)}
 
 
 @router.post("/system/clear-data")
@@ -621,13 +642,17 @@ async def list_all_concepts():
 def _scan_concept_total() -> int:
     try:
         from app.services.concept_select import select_concepts_for_ingest
+        from app.services.concept_cache import get_cached_concepts as _gcc
 
-        adapter = get_adapter()
-        selected = select_concepts_for_ingest(adapter.list_concepts())
+        all_concepts, _ = _gcc()
+        selected = select_concepts_for_ingest(all_concepts)
         return max(len(selected), 1)
     except Exception:
         try:
-            return max(len(get_adapter().list_concepts()), 1)
+            from app.services.concept_cache import get_cached_concepts as _gcc2
+
+            concepts, _ = _gcc2()
+            return max(len(concepts), 1)
         except Exception:
             return 1
 
@@ -647,7 +672,6 @@ def _run_scan_sync(trade_days: list[date]) -> None:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
     from app.config import settings
-    from app.services.storage_mode import uses_scan_memory_buffer
 
     if not trade_days:
         return
@@ -776,14 +800,11 @@ def _run_scan_sync(trade_days: list[date]) -> None:
                 )
                 scanner = ScanService(session)
                 scores = await scanner.run_scan(last_td)
-                if uses_scan_memory_buffer():
-                    from app.services.volatile_scan import get_today_buffer
+                from app.services.volatile_scan import get_today_buffer
 
-                    buf_day = get_today_buffer()
-                    if buf_day is not None:
-                        buf_day.scores_by_date[last_td] = list(scores)
-                else:
-                    await session.commit()
+                buf_day = get_today_buffer()
+                if buf_day is not None:
+                    buf_day.scores_by_date[last_td] = list(scores)
 
                 score_phase_t0 = tracker.start_phase(
                     "theme_score",
@@ -797,95 +818,104 @@ def _run_scan_sync(trade_days: list[date]) -> None:
                     score_phase_t0,
                     extra=f"{len(scores)}个板块 @ {last_td}",
                 )
-                if uses_scan_memory_buffer():
-                    from app.services.latest_scan_store import LatestScanStore
-                    from app.services.scan_context import (
-                        get_calendar_bounds,
-                        pop_market_cache_stats,
-                    )
-                    from app.services.storage_mode import uses_file_scan_storage
-                    from app.services.volatile_scan import (
-                        VolatileDashboardSnapshot,
-                        get_today_buffer,
-                        set_dashboard_snapshot,
-                    )
+                from app.services.latest_scan_store import LatestScanStore
+                from app.services.scan_context import (
+                    get_calendar_bounds,
+                    pop_market_cache_stats,
+                )
+                from app.services.storage_mode import uses_file_scan_storage
+                from app.services.volatile_scan import (
+                    VolatileDashboardSnapshot,
+                    get_today_buffer,
+                    set_dashboard_snapshot,
+                )
 
-                    buf_r = get_today_buffer()
-                    if buf_r and not scores and last_td in buf_r.scores_by_date:
-                        scores = list(buf_r.scores_by_date[last_td])
-                        log.warning(
-                            "[数据] 最终日评分为空，回退使用 scores_by_date[%s] count=%d",
-                            last_td,
-                            len(scores),
-                        )
-                    if buf_r and not scores and buf_r.sectors_by_code:
-                        log.warning(
-                            "[数据] 评分为空但缓冲区内有 %d 个板块，重跑最终日评分",
-                            len(buf_r.sectors_by_code),
-                        )
-                        scanner = ScanService(session)
-                        scores = await scanner.run_scan(last_td)
-                        buf_r.scores_by_date[last_td] = list(scores)
-                    # 防止“当日行情全空”覆盖仪表盘：若最终日板块快照全部无成分股数据，直接报错终止。
-                    if buf_r:
-                        final_rows = [
-                            r
-                            for r in (buf_r.sector_rows or [])
-                            if getattr(r, "trade_date", None) == last_td
-                        ]
-                        has_effective = any(
-                            int(getattr(r, "total_count", 0) or 0) > 0
-                            and float(getattr(r, "close", 0) or 0) > 0
-                            for r in final_rows
-                        )
-                        if final_rows and not has_effective:
-                            raise RuntimeError(
-                                f"{last_td} 板块行情全空（total_count=0），已中止覆盖仪表盘快照"
-                            )
-
-                    env_for_dash = buf_r.market_env if buf_r else None
-                    lm: dict = {}
-                    if buf_r:
-                        lm = {
-                            code: leader
-                            for code, leader in buf_r.leaders_by_code.items()
-                            if getattr(leader, "trade_date", None) == last_td
-                        }
-                    cal_start, cal_end = get_calendar_bounds()
-                    snap = VolatileDashboardSnapshot(
-                        trade_date=last_td,
-                        env=env_for_dash,
-                        scores=list(scores),
-                        leader_map=lm,
-                        scan_trade_days=list(trade_days),
-                    )
-                    set_dashboard_snapshot(snap)
-                    if uses_file_scan_storage():
-                        mstats = pop_market_cache_stats()
-                        LatestScanStore.save(
-                            trade_date=last_td,
-                            scores=list(scores),
-                            market_env=env_for_dash,
-                            leader_map=lm,
-                            scan_trade_days=list(trade_days),
-                            scan_start_date=cal_start,
-                            scan_end_date=cal_end,
-                            market_cache_stats=mstats or None,
-                        )
-                        log.info(
-                            "[数据] 已写入 scan/latest.json trade_date=%s scores=%d "
-                            "行情缓存跳过 %s 日 新拉 %s 日",
-                            last_td,
-                            len(scores),
-                            mstats.get("skipped", 0),
-                            mstats.get("fetched", 0),
-                        )
-                    await session.rollback()
-                    log.info(
-                        "[数据] 内存快照已发布 trade_date=%s scores=%d",
+                buf_r = get_today_buffer()
+                if buf_r and not scores and last_td in buf_r.scores_by_date:
+                    scores = list(buf_r.scores_by_date[last_td])
+                    log.warning(
+                        "[数据] 最终日评分为空，回退使用 scores_by_date[%s] count=%d",
                         last_td,
                         len(scores),
                     )
+                if buf_r and not scores and buf_r.sectors_by_code:
+                    log.warning(
+                        "[数据] 评分为空但缓冲区内有 %d 个板块，重跑最终日评分",
+                        len(buf_r.sectors_by_code),
+                    )
+                    scanner = ScanService(session)
+                    scores = await scanner.run_scan(last_td)
+                    buf_r.scores_by_date[last_td] = list(scores)
+                # 防止“当日行情全空”覆盖仪表盘：仅记录告警，不再中断任务。
+                if buf_r:
+                    final_rows = [
+                        r
+                        for r in (buf_r.sector_rows or [])
+                        if getattr(r, "trade_date", None) == last_td
+                    ]
+                    has_effective = any(
+                        int(getattr(r, "total_count", 0) or 0) > 0
+                        and float(getattr(r, "close", 0) or 0) > 0
+                        for r in final_rows
+                    )
+                    if final_rows and not has_effective:
+                        log.error(
+                            "[数据] %s 板块行情全空（total_count=0），继续发布快照供排查",
+                            last_td,
+                        )
+
+                env_for_dash = buf_r.market_env if buf_r else None
+                lm: dict = {}
+                if buf_r:
+                    lm = {
+                        code: leader
+                        for code, leader in buf_r.leaders_by_code.items()
+                        if getattr(leader, "trade_date", None) == last_td
+                    }
+                cal_start, cal_end = get_calendar_bounds()
+                sd: dict = {}
+                sf: dict = {}
+                if buf_r:
+                    sd = dict(buf_r.sectors_by_code)
+                    sf = dict(buf_r.flows_by_code)
+                snap = VolatileDashboardSnapshot(
+                    trade_date=last_td,
+                    env=env_for_dash,
+                    scores=list(scores),
+                    leader_map=lm,
+                    scan_trade_days=list(trade_days),
+                    sector_dailies=sd,
+                    sector_flows=sf,
+                )
+                set_dashboard_snapshot(snap)
+                if uses_file_scan_storage():
+                    mstats = pop_market_cache_stats()
+                    LatestScanStore.save(
+                        trade_date=last_td,
+                        scores=list(scores),
+                        market_env=env_for_dash,
+                        leader_map=lm,
+                        scan_trade_days=list(trade_days),
+                        scan_start_date=cal_start,
+                        scan_end_date=cal_end,
+                        market_cache_stats=mstats or None,
+                        sector_dailies=sd,
+                        sector_flows=sf,
+                    )
+                    log.info(
+                        "[数据] 已写入 scan/latest.json trade_date=%s scores=%d "
+                        "行情缓存跳过 %s 日 新拉 %s 日",
+                        last_td,
+                        len(scores),
+                        mstats.get("skipped", 0),
+                        mstats.get("fetched", 0),
+                    )
+                await session.rollback()
+                log.info(
+                    "[数据] 内存快照已发布 trade_date=%s scores=%d",
+                    last_td,
+                    len(scores),
+                )
                 if not scores:
                     fail_scan(
                         f"扫描完成但未产生板块评分（交易日 {last_td}），请检查板块勾选与日期区间"
@@ -1001,35 +1031,34 @@ async def trigger_scan(trade_date: date, db: AsyncSession = Depends(get_db)):
     scanner = ScanService(db)
     scores = await scanner.run_scan(trade_date)
 
-    from app.services.storage_mode import uses_scan_memory_buffer, uses_file_scan_storage
+    from app.services.storage_mode import uses_file_scan_storage
 
-    if uses_scan_memory_buffer():
-        from app.services.latest_scan_store import LatestScanStore
-        from app.services.volatile_scan import (
-            VolatileDashboardSnapshot,
-            get_today_buffer,
-            set_dashboard_snapshot,
-        )
+    from app.services.latest_scan_store import LatestScanStore
+    from app.services.volatile_scan import (
+        VolatileDashboardSnapshot,
+        get_today_buffer,
+        set_dashboard_snapshot,
+    )
 
-        buf = get_today_buffer()
-        lm = dict(buf.leaders_by_code) if buf else {}
-        snap = VolatileDashboardSnapshot(
+    buf = get_today_buffer()
+    lm = dict(buf.leaders_by_code) if buf else {}
+    snap = VolatileDashboardSnapshot(
+        trade_date=trade_date,
+        env=(buf.market_env if buf else None),
+        scores=list(scores),
+        leader_map=lm,
+        scan_trade_days=[trade_date],
+    )
+    set_dashboard_snapshot(snap)
+    if uses_file_scan_storage():
+        LatestScanStore.save(
             trade_date=trade_date,
-            env=(buf.market_env if buf else None),
             scores=list(scores),
+            market_env=snap.env,
             leader_map=lm,
             scan_trade_days=[trade_date],
         )
-        set_dashboard_snapshot(snap)
-        if uses_file_scan_storage():
-            LatestScanStore.save(
-                trade_date=trade_date,
-                scores=list(scores),
-                market_env=snap.env,
-                leader_map=lm,
-                scan_trade_days=[trade_date],
-            )
-        await db.rollback()
+    await db.rollback()
 
     return {"trade_date": str(trade_date), "sectors_scored": len(scores)}
 
@@ -1237,62 +1266,69 @@ async def dashboard(
         return DashboardOut(trade_date=None, market_env=None, top_sectors=[])
 
     snap = _resolve_dashboard_snapshot()
-    # 默认仪表盘必须走“最新交易日实时数据”口径，不依赖扫盘快照；
-    # 仅在用户显式指定 trade_date 时，才允许读取历史快照。
-    if snap and requested_td is not None:
-        snap_td = snap.trade_date
-        snap_days = list(snap.scan_trade_days) if snap.scan_trade_days else []
-        use_snap = td == snap_td or (snap_days and td in snap_days)
-        if use_snap:
-            anchor = snap_td or td
-            env_out = MarketEnvOut.model_validate(snap.env) if snap.env else None
-            leaders = snap.leader_map
-            pct_map: dict[str, float] = {}
-            overview = _market_overview_from_cache(
-                anchor,
-                int(getattr(snap.env, "limit_up_count", 0) or 0) if snap.env else 0,
-            )
-            if snap.scores:
-                from app.services.volatile_scan import get_today_buffer
+    use_snap = False
+    if snap:
+        if requested_td is not None:
+            snap_td = snap.trade_date
+            snap_days = list(snap.scan_trade_days) if snap.scan_trade_days else []
+            use_snap = td == snap_td or (snap_days and td in snap_days)
+        elif snap.trade_date is not None:
+            use_snap = True
+            td = snap.trade_date
+    if snap and use_snap:
+        anchor = snap.trade_date or td
+        env_out = MarketEnvOut.model_validate(snap.env) if snap.env else None
+        leaders = snap.leader_map
+        pct_map: dict[str, float] = {}
+        overview = _market_overview_from_cache(
+            anchor,
+            int(getattr(snap.env, "limit_up_count", 0) or 0) if snap.env else 0,
+        )
+        if snap.scores:
+            from app.services.volatile_scan import get_today_buffer
 
-                buf = get_today_buffer()
-                if buf and buf.sector_rows:
-                    for r in buf.sector_rows:
-                        if getattr(r, "trade_date", None) != anchor:
-                            continue
-                        pct = float(getattr(r, "pct_change", 0) or 0)
-                        pct_map[r.sector_code] = pct
-            top = [
-                _sector_score_out(
-                    s,
-                    leaders.get(s.sector_code),
-                    pct_change=pct_map.get(s.sector_code),
-                    include_rules=False,
-                )
-                for s in sorted(snap.scores, key=lambda x: x.rank)
-            ]
-            indices = []
-            try:
-                adapter = get_adapter()
-                indices = await asyncio.to_thread(_fetch_index_summaries, adapter, anchor)
-            except Exception:
-                pass
-            return DashboardOut(
-                trade_date=anchor,
-                market_env=env_out,
-                top_sectors=top,
-                market_overview=overview
-                or {
-                    "total_turnover_yi": 0.0,
-                    "up_count": 0,
-                    "down_count": 0,
-                    "flat_count": 0,
-                    "limit_up_count": int(getattr(snap.env, "limit_up_count", 0) or 0)
-                    if snap.env
-                    else 0,
-                },
-                indices=indices,
+            buf = get_today_buffer()
+            if buf and buf.sector_rows:
+                for r in buf.sector_rows:
+                    if getattr(r, "trade_date", None) != anchor:
+                        continue
+                    pct = float(getattr(r, "pct_change", 0) or 0)
+                    pct_map[r.sector_code] = pct
+            if not pct_map:
+                snap_dailies = getattr(snap, "sector_dailies", None) or {}
+                for code, daily_d in snap_dailies.items():
+                    pct_map[code] = float(daily_d.get("pct_change", 0) or 0)
+        top = [
+            _sector_score_out(
+                s,
+                leaders.get(s.sector_code),
+                pct_change=pct_map.get(s.sector_code),
+                include_rules=True,
             )
+            for s in sorted(snap.scores, key=lambda x: x.rank)
+        ]
+        indices = []
+        try:
+            adapter = get_adapter()
+            indices = await asyncio.to_thread(_fetch_index_summaries, adapter, anchor)
+        except Exception:
+            pass
+        return DashboardOut(
+            trade_date=anchor,
+            market_env=env_out,
+            top_sectors=top,
+            market_overview=overview
+            or {
+                "total_turnover_yi": 0.0,
+                "up_count": 0,
+                "down_count": 0,
+                "flat_count": 0,
+                "limit_up_count": int(getattr(snap.env, "limit_up_count", 0) or 0)
+                if snap.env
+                else 0,
+            },
+            indices=indices,
+        )
 
     env_row = await db.get(MarketEnvDaily, td)
     env_out = MarketEnvOut.model_validate(env_row) if env_row else None
@@ -1738,6 +1774,14 @@ async def sector_detail(
             if score_row:
                 daily = buf.sectors_by_code.get(sector_code) if buf else None
                 flow = buf.flows_by_code.get(sector_code) if buf else None
+                daily_from_snap = None
+                flow_from_snap = None
+                if daily is None:
+                    snap_dailies = getattr(snap, "sector_dailies", None) or {}
+                    daily_from_snap = snap_dailies.get(sector_code)
+                if flow is None:
+                    snap_flows = getattr(snap, "sector_flows", None) or {}
+                    flow_from_snap = snap_flows.get(sector_code)
                 leader = snap.leader_map.get(sector_code) or (
                     buf.leaders_by_code.get(sector_code) if buf else None
                 )
@@ -1766,9 +1810,27 @@ async def sector_detail(
                     rule_fail_reasons = reasons_raw
                 else:
                     rule_fail_reasons = []
-                net_wan = flow.net_inflow_main if flow else 0.0
-                up_c = daily.up_count if daily else 0
-                tot_c = daily.total_count if daily else 1
+                net_wan = (
+                    flow.net_inflow_main
+                    if flow
+                    else float(flow_from_snap.get("net_inflow_main", 0) or 0)
+                    if flow_from_snap
+                    else 0.0
+                )
+                up_c = (
+                    daily.up_count
+                    if daily
+                    else int(daily_from_snap.get("up_count", 0) or 0)
+                    if daily_from_snap
+                    else 0
+                )
+                tot_c = (
+                    daily.total_count
+                    if daily
+                    else int(daily_from_snap.get("total_count", 0) or 0)
+                    if daily_from_snap
+                    else 1
+                )
                 missing_items = _build_data_missing_items(daily, flow, stock_models)
                 return SectorDetailOut(
                     sector_code=sector_code,
@@ -1784,15 +1846,39 @@ async def sector_detail(
                     source_tag=str(getattr(score_row, "source_tag", "auto") or "auto"),
                     rules=list(getattr(score_row, "rules_json", []) or []),
                     rule_fail_reasons=rule_fail_reasons,
-                    limit_up_count=daily.limit_up_count if daily else 0,
-                    big_yang_count=daily.big_yang_count if daily else 0,
+                    limit_up_count=(
+                        daily.limit_up_count
+                        if daily
+                        else int(daily_from_snap.get("limit_up_count", 0) or 0)
+                        if daily_from_snap
+                        else 0
+                    ),
+                    big_yang_count=(
+                        daily.big_yang_count
+                        if daily
+                        else int(daily_from_snap.get("big_yang_count", 0) or 0)
+                        if daily_from_snap
+                        else 0
+                    ),
                     net_inflow_main=net_wan,
                     net_inflow_yi=round(net_wan / 10000, 2),
-                    inflow_days=flow.inflow_days if flow else 0,
+                    inflow_days=(
+                        flow.inflow_days
+                        if flow
+                        else int(flow_from_snap.get("inflow_days", 0) or 0)
+                        if flow_from_snap
+                        else 0
+                    ),
                     up_count=up_c,
                     total_count=tot_c,
                     up_ratio=round(up_c / tot_c, 4) if tot_c else 0,
-                    blow_up_rate=daily.blow_up_rate if daily else 0,
+                    blow_up_rate=(
+                        daily.blow_up_rate
+                        if daily
+                        else float(daily_from_snap.get("blow_up_rate", 0) or 0)
+                        if daily_from_snap
+                        else 0
+                    ),
                     position_hint=score_row.position_hint,
                     leader={
                         "stock_code": leader.stock_code,

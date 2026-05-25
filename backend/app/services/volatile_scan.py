@@ -49,6 +49,8 @@ class VolatileDashboardSnapshot:
     scores: list[Any]
     leader_map: dict[str, Any]
     scan_trade_days: list[date] = field(default_factory=list)
+    sector_dailies: dict[str, dict] = field(default_factory=dict)
+    sector_flows: dict[str, dict] = field(default_factory=dict)
 
 
 _lock = threading.Lock()

@@ -1,12 +1,11 @@
 from datetime import date, timedelta
 from typing import Callable, Optional
 
-from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.factory import get_adapter
 from app.config import settings
-from app.services.storage_mode import persist_scan_to_postgres, uses_scan_memory_buffer
+from app.services.storage_mode import uses_scan_memory_buffer
 from app.adapters.base import SectorQuote, StockQuote
 from app.models.tables import (
     MarketEnvDaily,
@@ -47,8 +46,10 @@ class IngestionService:
         on_progress: Optional[Callable[[int, int, str], None]] = None,
         skip_market_env: bool = False,
     ) -> None:
+        from app.services.concept_cache import get_cached_concepts
+
         with log_elapsed("拉取同花顺概念板块列表", logger_obj=logger, level=_LOG_INFO):
-            all_concepts = self.adapter.list_concepts()
+            all_concepts, _src = get_cached_concepts()
         concepts = select_concepts_for_ingest(
             all_concepts,
             max_concepts=max_concepts,
@@ -136,13 +137,10 @@ class IngestionService:
                     conclusion=env.conclusion,
                     can_long=env.can_long,
                 )
-                if uses_scan_memory_buffer():
-                    buf = get_today_buffer()
-                    if buf is None:
-                        raise RuntimeError("volatile buffer 未初始化")
-                    buf.market_env = env_row
-                else:
-                    await self.session.merge(env_row)
+                buf = get_today_buffer()
+                if buf is None:
+                    raise RuntimeError("volatile buffer 未初始化")
+                buf.market_env = env_row
             tracker.end_phase(
                 "market_env",
                 "大盘环境",
@@ -151,27 +149,7 @@ class IngestionService:
                 extra=f"涨停{env.limit_up_count}家 环境分{env.env_score:.0f}",
             )
 
-        with log_elapsed(
-            ("清理当日旧行情数据（已跳过内存/文件模式）")
-            if uses_scan_memory_buffer()
-            else "清理当日旧行情数据",
-            logger_obj=logger,
-        ):
-            if persist_scan_to_postgres():
-                await self.session.execute(
-                    delete(SectorDaily).where(SectorDaily.trade_date == trade_date)
-                )
-                await self.session.execute(
-                    delete(SectorFlowDaily).where(SectorFlowDaily.trade_date == trade_date)
-                )
-                await self.session.execute(
-                    delete(StockDaily).where(StockDaily.trade_date == trade_date)
-                )
-                await self.session.execute(
-                    delete(ThemeLeaderDaily).where(ThemeLeaderDaily.trade_date == trade_date)
-                )
-            else:
-                logger.debug("[数据] 跳过 PostgreSQL 当日 DELETE")
+        logger.debug("[数据] 跳过 PostgreSQL 当日 DELETE（内存/文件模式）")
 
         prefetch_fn = getattr(self.adapter, "prefetch_shared_market_data", None)
         if prefetch_fn is not None:
@@ -315,17 +293,13 @@ class IngestionService:
         flush_t0 = tracker.start_phase(
             "flush",
             "刷写数据",
-            "将内存中的板块/个股数据提交到数据库（volatile 模式则跳过）",
+            "板块/个股数据保留在内存快照",
         )
-        with log_elapsed("ingest_day flush", logger_obj=logger):
-            if uses_scan_memory_buffer():
-                logger.debug("[数据] 跳过 Session.flush")
-            else:
-                await self.session.flush()
+        logger.debug("[数据] 跳过 Session.flush（内存/文件模式）")
         tracker.end_phase(
             "flush",
             "刷写数据",
-            "入库阶段数据已落盘或保留在内存快照",
+            "入库阶段数据已保留在内存快照",
             flush_t0,
         )
         logger.info("[数据] ingest_day 全部完成 trade_date=%s concepts=%d", trade_date, concept_total)
@@ -338,76 +312,9 @@ class IngestionService:
         inflow_days: int,
         stock_quotes: list[StockQuote],
     ) -> None:
-        if uses_scan_memory_buffer():
-            await self._persist_sector_bundle_volatile(
-                trade_date, q, net, inflow_days, stock_quotes
-            )
-            return
-
-        self.session.add(
-            SectorDaily(
-                trade_date=trade_date,
-                sector_code=q.sector_code,
-                sector_name=q.sector_name,
-                pct_change=q.pct_change,
-                open=q.open,
-                close=q.close,
-                high=q.high,
-                low=q.low,
-                volume=q.volume,
-                money=q.money,
-                limit_up_count=q.limit_up_count,
-                big_yang_count=q.big_yang_count,
-                up_count=q.up_count,
-                total_count=q.total_count,
-                blow_up_rate=q.blow_up_rate,
-            )
+        await self._persist_sector_bundle_volatile(
+            trade_date, q, net, inflow_days, stock_quotes
         )
-        self.session.add(
-            SectorFlowDaily(
-                trade_date=trade_date,
-                sector_code=q.sector_code,
-                net_inflow_main=net,
-                inflow_days=inflow_days,
-            )
-        )
-
-        if not stock_quotes:
-            stocks = self.adapter.get_concept_stocks(q.sector_code, trade_date)
-            stock_quotes = self.adapter.get_stock_quotes(stocks, trade_date, q.sector_code)
-
-        leader = self._pick_leader(stock_quotes)
-        if leader:
-            self.session.add(
-                ThemeLeaderDaily(
-                    trade_date=trade_date,
-                    sector_code=q.sector_code,
-                    stock_code=leader.stock_code,
-                    stock_name=resolve_stock_name(leader.stock_code),
-                    limit_up_streak=leader.limit_up_streak,
-                    pct_change=leader.pct_change,
-                    money=leader.money,
-                )
-            )
-        for sq in stock_quotes:
-            self.session.add(
-                StockDaily(
-                    trade_date=trade_date,
-                    stock_code=sq.stock_code,
-                    sector_code=q.sector_code,
-                    open=sq.open,
-                    close=sq.close,
-                    high=sq.high,
-                    low=sq.low,
-                    pct_change=sq.pct_change,
-                    volume=sq.volume,
-                    money=sq.money,
-                    is_limit_up=sq.is_limit_up,
-                    is_big_yang=sq.is_big_yang,
-                    is_blow_up=sq.is_blow_up,
-                    limit_up_streak=sq.limit_up_streak,
-                )
-            )
 
     async def _persist_sector_bundle_volatile(
         self,

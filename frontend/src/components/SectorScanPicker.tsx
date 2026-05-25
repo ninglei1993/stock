@@ -14,17 +14,21 @@ export default function SectorScanPicker({ disabled }: Props) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [scanHistory, setScanHistory] = useState<
+    Array<{ label: string; codes: string[]; saved_at: string }>
+  >([]);
+  const [historyLabel, setHistoryLabel] = useState("");
 
   const load = useCallback(() => {
     setLoading(true);
-    api
-      .getScanSectors()
-      .then((res) => {
+    Promise.all([api.getScanSectors(), api.getScanHistory()])
+      .then(([res, hist]) => {
         setUniverse(res.universe);
         const selectedSet = new Set(res.selected_codes);
         setSelected(selectedSet);
         setHistorySelected(new Set(res.selected_codes));
         setUseExplicit(res.use_explicit_selection);
+        setScanHistory(hist.history);
       })
       .catch((e) => setError(e instanceof Error ? e.message : "加载板块失败"))
       .finally(() => setLoading(false));
@@ -117,6 +121,56 @@ export default function SectorScanPicker({ disabled }: Props) {
     void persist(selected, false);
   };
 
+  const refreshHistory = () => {
+    api
+      .getScanHistory()
+      .then((res) => setScanHistory(res.history))
+      .catch(() => {});
+  };
+
+  const saveCurrentToHistory = async () => {
+    if (selected.size === 0) {
+      setError("请先勾选至少一个板块");
+      return;
+    }
+    const label =
+      historyLabel.trim() ||
+      window.prompt("请输入保存名称", "未命名")?.trim() ||
+      "未命名";
+    setSaving(true);
+    setError("");
+    try {
+      await api.saveScanHistory(label, Array.from(selected));
+      setHistoryLabel("");
+      refreshHistory();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "保存历史失败");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const applyHistoryEntry = async (entry: { label: string; codes: string[]; saved_at: string }) => {
+    const next = new Set(entry.codes);
+    setSelected(next);
+    setUseExplicit(true);
+    await persist(next, true);
+    window.dispatchEvent(new CustomEvent("themeradar:scan-history-applied"));
+  };
+
+  const formatHistoryDate = (iso: string) => {
+    try {
+      return new Date(iso).toLocaleString("zh-CN", {
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch {
+      return iso;
+    }
+  };
+
   if (loading) {
     return (
       <p style={{ fontSize: "0.85rem", color: "var(--muted)", margin: "0.5rem 0 0" }}>
@@ -126,6 +180,7 @@ export default function SectorScanPicker({ disabled }: Props) {
   }
 
   return (
+    <>
     <div className="sector-scan-picker">
       <div
         style={{
@@ -248,5 +303,87 @@ export default function SectorScanPicker({ disabled }: Props) {
         )}
       </div>
     </div>
+
+    <div style={{ marginTop: "0.85rem" }}>
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "0.5rem",
+          alignItems: "center",
+          marginBottom: "0.45rem",
+        }}
+      >
+        <label style={{ fontSize: "0.85rem", color: "var(--muted)" }}>勾选历史</label>
+        <input
+          type="text"
+          placeholder="保存名称（可选）"
+          value={historyLabel}
+          onChange={(e) => setHistoryLabel(e.target.value)}
+          disabled={disabled || saving}
+          style={{ flex: "1 1 10rem", minWidth: "8rem", fontSize: "0.82rem" }}
+        />
+        <button
+          type="button"
+          className="btn btn-ghost"
+          style={{ fontSize: "0.8rem", padding: "0.25rem 0.6rem" }}
+          disabled={disabled || saving || selected.size === 0}
+          onClick={() => void saveCurrentToHistory()}
+        >
+          保存当前勾选
+        </button>
+      </div>
+      {scanHistory.length === 0 ? (
+        <p style={{ fontSize: "0.78rem", color: "var(--muted)", margin: 0 }}>
+          暂无历史记录，保存当前勾选后可快速恢复。
+        </p>
+      ) : (
+        <ul
+          style={{
+            listStyle: "none",
+            margin: 0,
+            padding: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: "0.35rem",
+          }}
+        >
+          {scanHistory
+            .slice()
+            .reverse()
+            .map((entry, idx) => (
+              <li key={`${entry.saved_at}-${idx}`}>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={disabled || saving}
+                  onClick={() => void applyHistoryEntry(entry)}
+                  style={{
+                    width: "100%",
+                    textAlign: "left",
+                    fontSize: "0.8rem",
+                    padding: "0.4rem 0.65rem",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: "0.5rem",
+                  }}
+                >
+                  <span>
+                    <strong>{entry.label}</strong>
+                    <span style={{ color: "var(--muted)", marginLeft: "0.5rem" }}>
+                      {entry.codes.length} 个板块
+                    </span>
+                  </span>
+                  <span style={{ color: "var(--muted)", fontSize: "0.72rem", flexShrink: 0 }}>
+                    {formatHistoryDate(entry.saved_at)}
+                  </span>
+                </button>
+              </li>
+            ))}
+        </ul>
+      )}
+    </div>
+    </>
   );
 }

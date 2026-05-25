@@ -288,6 +288,44 @@ export default function AStrategyDetail() {
         </div>
       </div>
 
+      {/* 阶段判断逻辑 */}
+      <div className="card-glass" style={{ marginBottom: "1rem" }}>
+        <h3 style={{ fontSize: "1rem", marginBottom: "0.6rem" }}>阶段判断逻辑（状态机）</h3>
+        <p style={{ fontSize: "0.88rem", color: "var(--muted)", lineHeight: 1.7, marginBottom: "0.75rem" }}>
+          A策略通过六大规则通过数量与退出信号，自动确定每个板块当前所处的阶段。判断优先级如下：
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.65rem" }}>
+          {[
+            { condition: "退出信号 ≥ 2 → exit_state = exit", stage: "decay", label: "衰退", desc: "触发退出机制，该板块主线行情已结束，建议清仓" },
+            { condition: "6条规则全部通过 + 20日涨幅 ≥ 18%", stage: "climax", label: "高潮", desc: "顶级主线确立，处于高潮阶段，需警惕见顶风险" },
+            { condition: "6条规则全部通过 + 20日涨幅 10%~18%", stage: "ferment", label: "发酵", desc: "次级主线确立，正处于发酵上升期，是鱼身阶段" },
+            { condition: "通过数 ≥ 4（但未全部通过）", stage: "sprout", label: "萌芽", desc: "初步具备主线特征但尚未完全确立，可轻仓试探" },
+            { condition: "通过数 < 4", stage: "dormant", label: "沉寂", desc: "不具备主线特征，建议观望不参与" },
+          ].map((item) => (
+            <div
+              key={item.stage}
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: "0.75rem",
+                padding: "0.65rem 0.85rem",
+                background: "rgba(0,0,0,0.15)",
+                borderRadius: "10px",
+                border: "1px solid var(--border)",
+              }}
+            >
+              <span className={`stage-badge stage-${item.stage}`} style={{ flexShrink: 0, marginTop: "0.15rem" }}>
+                {item.label}
+              </span>
+              <div>
+                <div style={{ fontSize: "0.85rem", fontWeight: 600 }}>{item.condition}</div>
+                <div style={{ fontSize: "0.78rem", color: "var(--muted)", marginTop: "0.2rem" }}>{item.desc}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* 当前主线列表 */}
       {mainLines.length > 0 && (
         <>
