@@ -49,6 +49,7 @@ export const STRATEGY_LABEL: Record<string, string> = {
   sprout_probe: "萌芽试探",
   fixed_hold: "固定持有（基准）",
   top5_rotation: "前五轮动",
+  a_strategy_strict: "A策略严格回测",
 };
 
 export const RUN_STATUS_LABEL: Record<string, string> = {

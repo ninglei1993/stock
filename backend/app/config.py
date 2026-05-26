@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     # 第三方 Tushare 代理地址（留空则用官方 api.waditu.com）
     tushare_api_url: str = ""
     # Tushare 单次请求超时（秒）
-    tushare_timeout_seconds: int = 60
+    tushare_timeout_seconds: int = 120
     tushare_rate_limit: float = 170.0
     # True=收盘扫描不落库 PostgreSQL（仅内存快照供仪表盘）；重启/多 worker 不适用
     scan_volatile_storage: bool = False

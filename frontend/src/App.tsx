@@ -4,6 +4,7 @@ import Dashboard from "./pages/Dashboard";
 import ScanPanel from "./pages/ScanPanel";
 import SectorDetail from "./pages/SectorDetail";
 import AStrategyDetail from "./pages/AStrategyDetail";
+import AStrategyBacktest from "./pages/AStrategyBacktest";
 import TaskStatusBar from "./components/TaskStatusBar";
 
 export default function App() {
@@ -26,6 +27,9 @@ export default function App() {
             <NavLink to="/a-strategy" className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
               A策略
             </NavLink>
+            <NavLink to="/a-strategy-backtest" className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
+              A策略回测
+            </NavLink>
           </nav>
           <p className="disclaimer" style={{ marginTop: "2rem" }}>
             数据仅供参考，不构成投资建议。请自行决策并控制风险。
@@ -37,6 +41,7 @@ export default function App() {
             <Route path="/" element={<Dashboard key={refreshKey} />} />
             <Route path="/scan" element={<ScanPanel key={refreshKey} />} />
             <Route path="/a-strategy" element={<AStrategyDetail key={refreshKey} />} />
+            <Route path="/a-strategy-backtest" element={<AStrategyBacktest key={refreshKey} />} />
             <Route path="/sectors-list" element={<Navigate to="/scan" replace />} />
             <Route path="/sectors/:code" element={<SectorDetail key={refreshKey} />} />
           </Routes>

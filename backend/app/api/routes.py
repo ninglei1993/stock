@@ -2134,3 +2134,178 @@ async def delete_backtest(run_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(404, "Run not found")
     await db.delete(run)
     return {"deleted": run_id}
+
+
+# ---------------------------------------------------------------------------
+# A策略严格回测 (独立路由组，与上方 /backtest/* 共用 DB 表)
+# ---------------------------------------------------------------------------
+
+_A_BT_STRATEGY_ID = "a_strategy_strict"
+
+
+async def _run_a_strategy_backtest_task(run_id: int) -> None:
+    from app.services.backtest_context import clear_backtest_context, set_backtest_sector_codes
+    from app.services.a_strategy_backtest_engine import AStrategyBacktestEngine
+
+    async with AsyncSessionLocal() as session:
+        run = await session.get(BacktestRun, run_id)
+        try:
+            if run:
+                codes = list((run.params or {}).get("sector_codes") or [])
+                set_backtest_sector_codes(codes)
+            engine = AStrategyBacktestEngine(session)
+            await engine.run(run_id)
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            async with AsyncSessionLocal() as s2:
+                run_fail = await s2.get(BacktestRun, run_id)
+                if run_fail:
+                    run_fail.status = "failed"
+                    await s2.commit()
+        finally:
+            clear_backtest_context()
+
+
+@router.post("/a-strategy-backtest/runs", response_model=BacktestRunOut)
+async def create_a_strategy_backtest(
+    body: BacktestCreate,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    start_date, end_date = clamp_backtest_range(body.start_date, body.end_date)
+    params = dict(body.params or {})
+    codes = params.get("sector_codes") or []
+    if not codes:
+        raise HTTPException(400, "A策略回测请至少勾选一个板块")
+    params.setdefault("initial_capital", 1_000_000)
+    run = BacktestRun(
+        strategy_id=_A_BT_STRATEGY_ID,
+        start_date=start_date,
+        end_date=end_date,
+        params=params,
+        status="pending",
+    )
+    db.add(run)
+    await db.flush()
+    await db.refresh(run)
+    background_tasks.add_task(_run_a_strategy_backtest_task, run.id)
+    return BacktestRunOut.model_validate(run)
+
+
+@router.get("/a-strategy-backtest/runs", response_model=list[BacktestRunOut])
+async def list_a_strategy_backtest_runs(db: AsyncSession = Depends(get_db)):
+    rows = (
+        await db.execute(
+            select(BacktestRun)
+            .where(BacktestRun.strategy_id == _A_BT_STRATEGY_ID)
+            .order_by(desc(BacktestRun.id))
+            .limit(20)
+        )
+    ).scalars().all()
+    return [BacktestRunOut.model_validate(r) for r in rows]
+
+
+@router.get("/a-strategy-backtest/runs/{run_id}", response_model=BacktestRunOut)
+async def get_a_strategy_backtest_run(run_id: int, db: AsyncSession = Depends(get_db)):
+    run = await db.get(BacktestRun, run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+    return BacktestRunOut.model_validate(run)
+
+
+@router.get("/a-strategy-backtest/runs/{run_id}/report", response_model=BacktestReport)
+async def a_strategy_backtest_report(run_id: int, db: AsyncSession = Depends(get_db)):
+    run = await db.get(BacktestRun, run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+    metrics = (
+        await db.execute(select(BacktestMetric).where(BacktestMetric.run_id == run_id))
+    ).scalars().first()
+    equity = (
+        await db.execute(
+            select(BacktestEquityDaily)
+            .where(BacktestEquityDaily.run_id == run_id)
+            .order_by(BacktestEquityDaily.trade_date)
+        )
+    ).scalars().all()
+
+    params = run.params or {}
+    initial_capital = float(params.get("initial_capital") or 1_000_000)
+    bench_scale = initial_capital if initial_capital >= 10_000 else 1_000_000
+
+    equity_curve: list[EquityPointOut] = []
+    for e in equity:
+        bench = float(e.benchmark_equity)
+        if bench < 1000:
+            bench *= bench_scale
+        equity_curve.append(EquityPointOut(
+            trade_date=str(e.trade_date),
+            equity=e.equity,
+            benchmark=bench,
+        ))
+
+    report_metrics = None
+    if metrics:
+        report_metrics = {
+            "total_return": metrics.total_return,
+            "annual_return": metrics.annual_return,
+            "max_drawdown": metrics.max_drawdown,
+            "sharpe": metrics.sharpe,
+            "win_rate": metrics.win_rate,
+            "trade_count": metrics.trade_count,
+            "fish_body_capture": metrics.fish_body_capture,
+            "benchmark_return": metrics.benchmark_return,
+        }
+        if equity_curve and initial_capital >= 10_000:
+            first_eq = equity_curve[0].equity
+            last_eq = equity_curve[-1].equity
+            if abs(last_eq - first_eq) > 1 and abs(metrics.total_return) < 0.01:
+                report_metrics["total_return"] = round(
+                    (last_eq - initial_capital) / initial_capital * 100, 2
+                )
+                report_metrics["annual_return"] = report_metrics["total_return"]
+
+    return BacktestReport(
+        run=BacktestRunOut.model_validate(run),
+        strategy_name_cn="A策略严格回测",
+        trade_mode_note=(
+            "回测标的为各概念板块的龙头个股。"
+            "满足A策略6条硬性规则后，次日开盘价买入；"
+            "退出信号触发或止损-8%时，次日开盘价卖出。"
+        ),
+        metrics=report_metrics,
+        equity_curve=equity_curve,
+        stage_win_rates=metrics.extra.get("stage_win_rates", {}) if metrics and metrics.extra else {},
+    )
+
+
+@router.get(
+    "/a-strategy-backtest/runs/{run_id}/trades",
+    response_model=list[BacktestTradeOut],
+)
+async def a_strategy_backtest_trades(
+    run_id: int,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(200, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+):
+    rows = (
+        await db.execute(
+            select(BacktestTrade)
+            .where(BacktestTrade.run_id == run_id)
+            .order_by(BacktestTrade.id)
+            .offset(offset)
+            .limit(limit)
+        )
+    ).scalars().all()
+    return [trade_to_out(r) for r in rows]
+
+
+@router.delete("/a-strategy-backtest/runs/{run_id}")
+async def delete_a_strategy_backtest(run_id: int, db: AsyncSession = Depends(get_db)):
+    run = await db.get(BacktestRun, run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+    await db.delete(run)
+    return {"deleted": run_id}

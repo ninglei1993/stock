@@ -9,6 +9,9 @@ ALERT_LABELS: dict[str, str] = {
     "ENV_BAD": "环境恶化",
     "MAIN_LINE_BUY": "主线买入",
     "MAIN_LINE_ROTATE": "主线换仓",
+    "A_STRATEGY_BUY": "A策略买入",
+    "A_STRATEGY_EXIT": "A策略退出",
+    "A_STRATEGY_STOP_LOSS": "A策略止损",
 }
 
 STRATEGY_LABELS: dict[str, str] = {
@@ -17,6 +20,7 @@ STRATEGY_LABELS: dict[str, str] = {
     "sprout_probe": "萌芽试探",
     "fixed_hold": "固定持有（基准）",
     "top5_rotation": "前五轮动",
+    "a_strategy_strict": "A策略严格回测",
 }
 
 RUN_STATUS_LABELS: dict[str, str] = {

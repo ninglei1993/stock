@@ -447,4 +447,26 @@ export const api = {
       `/a-strategy/manual-inputs/${encodeURIComponent(sectorCode)}?trade_date=${tradeDate}`,
       { method: "DELETE" }
     ),
+
+  createAStrategyBacktest: (body: {
+    start_date: string;
+    end_date: string;
+    params?: Record<string, unknown>;
+  }) =>
+    fetchJson<BacktestRun>("/a-strategy-backtest/runs", {
+      method: "POST",
+      body: JSON.stringify({ ...body, strategy_id: "a_strategy_strict" }),
+    }),
+  listAStrategyBacktests: () =>
+    fetchJson<BacktestRun[]>("/a-strategy-backtest/runs"),
+  getAStrategyBacktest: (id: number) =>
+    fetchJson<BacktestRun>(`/a-strategy-backtest/runs/${id}`),
+  aStrategyBacktestReport: (id: number) =>
+    fetchJson<BacktestReport>(`/a-strategy-backtest/runs/${id}/report`),
+  aStrategyBacktestTrades: (id: number) =>
+    fetchJson<BacktestTrade[]>(`/a-strategy-backtest/runs/${id}/trades`),
+  deleteAStrategyBacktest: (id: number) =>
+    fetchJson<{ deleted: number }>(`/a-strategy-backtest/runs/${id}`, {
+      method: "DELETE",
+    }),
 };
