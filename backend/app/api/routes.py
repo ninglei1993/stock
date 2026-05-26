@@ -1291,53 +1291,39 @@ async def dashboard_limit_stocks(
         except Exception:
             fresh_name_map = {}
 
-    def _fetch_quote_names_fallback(ts_codes: list[str]) -> dict[str, str]:
-        """公开行情名称兜底（不依赖 Tushare 权限），仅用于未解析出中文名的股票。"""
-        import re
-        from urllib.request import Request, urlopen
-
-        sym_to_ts: dict[str, str] = {}
-        for ts in ts_codes:
-            raw = str(ts or "").strip().upper()
-            if "." not in raw:
-                continue
-            num, suffix = raw.split(".", 1)
-            if suffix == "SH":
-                sym_to_ts[f"sh{num}"] = raw
-            elif suffix == "SZ":
-                sym_to_ts[f"sz{num}"] = raw
-            elif suffix == "BJ":
-                sym_to_ts[f"bj{num}"] = raw
-        if not sym_to_ts:
-            return {}
-
-        url = f"https://hq.sinajs.cn/list={','.join(sym_to_ts.keys())}"
-        req = Request(
-            url,
-            headers={
-                "Referer": "https://finance.sina.com.cn/",
-                "User-Agent": "Mozilla/5.0",
-            },
-        )
-        try:
-            with urlopen(req, timeout=4) as resp:
-                text = resp.read().decode("gbk", errors="ignore")
-        except Exception:
+    def _fetch_tushare_names_fallback(ts_codes: list[str], data_adapter: Any) -> dict[str, str]:
+        """仅使用 Tushare stock_basic 兜底补充股票名称。"""
+        if not ts_codes or not hasattr(data_adapter, "_call"):
             return {}
         out: dict[str, str] = {}
-        for line in text.split(";"):
-            line = line.strip()
-            if not line:
+        for raw in sorted({str(c or "").strip().upper() for c in ts_codes if str(c or "").strip()}):
+            df = None
+            for status in ("L", "D", "P"):
+                try:
+                    df = data_adapter._call(
+                        "stock_basic",
+                        ts_code=raw,
+                        list_status=status,
+                        fields="ts_code,name",
+                    )
+                except Exception as exc:
+                    logger.debug("[数据] stock_basic 名称兜底失败 ts_code=%s status=%s: %s", raw, status, exc)
+                    continue
+                if df is not None and not df.empty:
+                    break
+            if (df is None or df.empty):
+                try:
+                    df = data_adapter._call("stock_basic", ts_code=raw, fields="ts_code,name")
+                except Exception as exc:
+                    logger.debug("[数据] stock_basic 名称兜底失败 ts_code=%s: %s", raw, exc)
+                    continue
+            if df is None or df.empty or not {"ts_code", "name"}.issubset(set(df.columns)):
                 continue
-            m = re.search(r'var hq_str_([a-z0-9]+)="([^"]*)"', line, flags=re.IGNORECASE)
-            if not m:
-                continue
-            sym = m.group(1).lower()
-            payload = m.group(2)
-            name = payload.split(",", 1)[0].strip() if payload else ""
-            ts = sym_to_ts.get(sym)
-            if ts and name:
-                out[ts] = name
+            row = df.iloc[0]
+            ts_code = str(row.get("ts_code", "")).strip().upper()
+            name = str(row.get("name", "")).strip()
+            if ts_code and name:
+                out[ts_code] = name
         return out
 
     row_items: list[dict[str, Any]] = []
@@ -1365,7 +1351,8 @@ async def dashboard_limit_stocks(
             }
         )
     if unresolved_codes:
-        fallback_names = _fetch_quote_names_fallback(unresolved_codes)
+        adapter = adapter or get_adapter()
+        fallback_names = _fetch_tushare_names_fallback(unresolved_codes, adapter)
         if fallback_names:
             for item in row_items:
                 code = item["stock_code"]

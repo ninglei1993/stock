@@ -49,11 +49,15 @@ def _ensure_pro():
     import tushare as ts
 
     ts.set_token(settings.tushare_token)
-    pro = ts.pro_api(settings.tushare_token)
+    pro = ts.pro_api(settings.tushare_token, timeout=settings.tushare_timeout_seconds)
     _apply_api_endpoint(pro)
     _pro = pro
     endpoint = getattr(pro, "_DataApi__http_url", "default")
-    logger.info("Tushare client ready, endpoint=%s", endpoint)
+    logger.info(
+        "Tushare client ready, endpoint=%s timeout=%ss",
+        endpoint,
+        settings.tushare_timeout_seconds,
+    )
     return _pro
 
 

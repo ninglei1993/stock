@@ -17,7 +17,7 @@ import pandas as pd
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.factory import get_adapter
-from app.services.trade_calendar import latest_completed_trade_day
+from app.services.trade_calendar import latest_completed_trade_day, latest_previous_trade_day
 
 logger = logging.getLogger(__name__)
 
@@ -33,13 +33,16 @@ def resolve_dashboard_trade_date(requested: Optional[date] = None) -> Optional[d
     - 未传日期：取最近已收盘交易日（不依赖扫描入库数据）
     - 传了日期：截断到最近已收盘交易日
     """
+    if requested is None:
+        try:
+            return latest_previous_trade_day()
+        except Exception:
+            return None
+
     try:
         completed = latest_completed_trade_day()
     except Exception:
         completed = None
-
-    if requested is None:
-        return completed
 
     if completed is not None and requested > completed:
         return completed

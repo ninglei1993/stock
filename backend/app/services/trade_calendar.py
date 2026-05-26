@@ -107,6 +107,28 @@ def latest_completed_trade_day() -> date:
     return _latest_completed_trade_day()
 
 
+def latest_previous_trade_day() -> date:
+    """
+    最近一个“昨天及更早”的交易日。
+    用于仪表盘默认日期：无论是否已收盘，都不默认展示当日。
+    """
+    from app.adapters.factory import get_adapter
+
+    today = _today_cn()
+    end_day = today - timedelta(days=1)
+    try:
+        adapter = get_adapter()
+        days = adapter.get_trade_days(end_day - timedelta(days=40), end_day)
+        if days:
+            return days[-1]
+    except Exception:
+        pass
+    cached = _latest_cached_market_day(end_day)
+    if cached is not None:
+        return cached
+    return end_day
+
+
 def clear_trade_day_ui_cache() -> None:
     _latest_open_trade_day_cached.cache_clear()
 
