@@ -66,6 +66,12 @@ export default function SectorScanPicker({ disabled }: Props) {
     return count;
   }, [selected, historySelected]);
 
+  const historySelectedConcepts = useMemo(() => {
+    return universe
+      .filter((c) => historySelected.has(c.sector_code))
+      .sort((a, b) => a.sector_name.localeCompare(b.sector_name, "zh-Hans-CN"));
+  }, [universe, historySelected]);
+
   const isHistorySelected = (code: string) => historySelected.has(code);
   const isSelected = (code: string) => selected.has(code);
 
@@ -243,6 +249,40 @@ export default function SectorScanPicker({ disabled }: Props) {
       </p>
       {error && (
         <p style={{ fontSize: "0.78rem", color: "var(--danger)", marginBottom: "0.5rem" }}>{error}</p>
+      )}
+      {historySelectedConcepts.length > 0 && (
+        <div
+          style={{
+            border: "1px dashed var(--border)",
+            borderRadius: "8px",
+            padding: "0.45rem 0.6rem",
+            marginBottom: "0.55rem",
+            maxHeight: "120px",
+            overflowY: "auto",
+            background: "rgba(0,0,0,0.1)",
+          }}
+        >
+          <p style={{ margin: "0 0 0.35rem", fontSize: "0.74rem", color: "var(--muted)" }}>
+            历史已勾选板块（{historySelectedConcepts.length}）：
+          </p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
+            {historySelectedConcepts.map((c) => (
+              <span
+                key={`history-${c.sector_code}`}
+                style={{
+                  fontSize: "0.72rem",
+                  padding: "0.12rem 0.38rem",
+                  borderRadius: "999px",
+                  border: "1px solid var(--border)",
+                  color: "var(--muted)",
+                }}
+              >
+                {c.sector_name}
+                <span style={{ marginLeft: "0.28rem", opacity: 0.85 }}>{c.sector_code}</span>
+              </span>
+            ))}
+          </div>
+        </div>
       )}
       <div
         style={{

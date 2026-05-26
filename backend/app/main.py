@@ -12,8 +12,9 @@ from app.jobs.scheduler import start_scheduler
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.access").disabled = True
 logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
-logging.getLogger("app.adapters.tushare_adapter").setLevel(logging.WARNING)
+logging.getLogger("app.adapters.tushare_adapter").setLevel(logging.ERROR)
 logging.getLogger("app.services.ingestion").setLevel(logging.WARNING)
 logging.getLogger("app.services.market_cache").setLevel(logging.WARNING)
 logging.getLogger("app.utils.timing_log").setLevel(logging.WARNING)
@@ -26,7 +27,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    from app.adapters.factory import get_adapter, reset_adapter
+    from app.adapters.factory import reset_adapter
     from app.services.concept_cache import clear_concept_cache, warm_cache_background
 
     logger.info(
@@ -37,10 +38,7 @@ async def lifespan(app: FastAPI):
 
     reset_adapter()
     clear_concept_cache()
-    try:
-        get_adapter()
-    except RuntimeError as exc:
-        logger.error("Startup adapter failed: %s", exc)
+    logger.info("Startup skip sync Tushare probe; adapter will initialize on first request.")
 
     warm_cache_background()
     from app.services.latest_scan_store import LatestScanStore

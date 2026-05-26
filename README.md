@@ -81,7 +81,7 @@ pip install -r requirements.txt
 export DATABASE_URL=postgresql+asyncpg://themeradar:themeradar@localhost:5432/themeradar
 export DATABASE_URL_SYNC=postgresql://themeradar:themeradar@localhost:5432/themeradar
 export DEMO_MODE=true
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8000 --no-access-log
 ```
 
 **前端**
