@@ -23,6 +23,7 @@ from app.services.scan_pipeline import ScanPipelineTracker, get_tracker
 from app.services.sector_aggregator import SectorAggregator
 from app.services.stock_select import limit_stocks_for_ingest
 from app.services.stock_names import resolve_stock_name
+from app.services.task_status import is_cancel_requested
 from app.services.volatile_scan import get_today_buffer, prepare_today_buffer
 from app.utils.timing_log import log_elapsed
 
@@ -183,6 +184,9 @@ class IngestionService:
             f"共 {total} 个概念：拉成分股 → 筛 TopN → 从缓存取资金流/行情 → 写入",
         )
         for code in codes:
+            if is_cancel_requested():
+                logger.info("[扫描] ingest_day 收到停止信号，立即退出板块循环 trade_date=%s", trade_date)
+                return
             label = names.get(code, code)
             if on_progress:
                 on_progress(done, total, label)

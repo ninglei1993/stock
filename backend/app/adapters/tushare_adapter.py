@@ -29,6 +29,18 @@ _TS_CALL_MAX_RETRIES = 2
 _TS_CALL_RETRY_BASE_SECONDS = 1.5
 
 
+def _scan_cancel_requested() -> bool:
+    """
+    扫描取消信号：用于尽快终止后续 Tushare 请求与重试。
+    """
+    try:
+        from app.services.task_status import is_cancel_requested
+
+        return bool(is_cancel_requested())
+    except Exception:
+        return False
+
+
 def reset_tushare_client() -> None:
     global _pro
     _pro = None
@@ -79,10 +91,16 @@ class TushareAdapter(MarketDataAdapter):
         _ensure_pro()
 
     def _call(self, fn_name: str, *, plain: str = "", **kwargs) -> pd.DataFrame:
+        if _scan_cancel_requested():
+            logger.info("[扫描] 已请求停止，跳过 Tushare %s 调用", fn_name)
+            return pd.DataFrame()
         if plain:
             logger.debug("[流程] %s", plain)
         last_exc: Exception | None = None
         for attempt in range(1, _TS_CALL_MAX_RETRIES + 2):
+            if _scan_cancel_requested():
+                logger.info("[扫描] 已请求停止，中断 Tushare %s 调用（attempt=%d）", fn_name, attempt)
+                return pd.DataFrame()
             tushare_limiter.acquire_sync()
             pro = _ensure_pro()
             fn = getattr(pro, fn_name)
@@ -119,6 +137,9 @@ class TushareAdapter(MarketDataAdapter):
                     )
                 )
                 if retryable and attempt <= _TS_CALL_MAX_RETRIES:
+                    if _scan_cancel_requested():
+                        logger.info("[扫描] 已请求停止，取消 Tushare %s 重试", fn_name)
+                        return pd.DataFrame()
                     sleep_s = _TS_CALL_RETRY_BASE_SECONDS * attempt
                     logger.warning(
                         "[数据] Tushare %s 网络异常（第 %d/%d 次）耗时=%.2fs: %s；%.1fs 后重试",
@@ -129,7 +150,16 @@ class TushareAdapter(MarketDataAdapter):
                         exc,
                         sleep_s,
                     )
-                    time.sleep(sleep_s)
+                    # 等待重试期间也响应“停止扫盘”信号，避免长时间卡住。
+                    step = 0.2
+                    waited = 0.0
+                    while waited < sleep_s:
+                        if _scan_cancel_requested():
+                            logger.info("[扫描] 已请求停止，终止 Tushare %s 重试等待", fn_name)
+                            return pd.DataFrame()
+                        pause = min(step, sleep_s - waited)
+                        time.sleep(pause)
+                        waited += pause
                     continue
                 if retryable:
                     logger.error(
@@ -626,6 +656,9 @@ class TushareAdapter(MarketDataAdapter):
             skipped = 0
             fetched = 0
             for td in need_days:
+                if _scan_cancel_requested():
+                    logger.info("[扫描] 已请求停止，中断全市场公有数据预取")
+                    break
                 key = _fmt(td)
                 before = (
                     key not in TushareAdapter._daily_cache,

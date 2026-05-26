@@ -812,6 +812,10 @@ def _run_scan_sync(trade_days: list[date]) -> None:
                         on_progress=on_progress,
                         skip_market_env=not is_last,
                     )
+                    if is_cancel_requested():
+                        cancel_scan()
+                        log.info("[扫描] 用户请求取消（ingest进行中），已中止")
+                        return
                     log.info(
                         "[扫描] ingest %s 完成 耗时=%.1fs",
                         trade_date,
