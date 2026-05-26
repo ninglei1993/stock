@@ -111,7 +111,6 @@ export interface SystemStatus {
 export interface Dashboard {
   trade_date: string | null;
   market_env: MarketEnv | null;
-  top_sectors: SectorScore[];
   market_overview?: {
     total_turnover_yi: number;
     turnover_delta_yi: number;

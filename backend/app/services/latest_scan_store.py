@@ -76,6 +76,7 @@ class LoadedLatestScan:
     saved_at: Optional[str] = None
     sector_dailies: dict[str, dict] = field(default_factory=dict)
     sector_flows: dict[str, dict] = field(default_factory=dict)
+    stocks_by_sector: dict[str, list[dict]] = field(default_factory=dict)
 
 
 def scan_latest_path() -> Path:
@@ -177,12 +178,45 @@ def _sector_flow_to_dict(row: Any) -> dict[str, Any]:
     }
 
 
+def _stock_to_dict(row: Any) -> dict[str, Any]:
+    """将 StockDaily ORM 对象或 dict 序列化为可 JSON 化的 dict。"""
+    if isinstance(row, dict):
+        return row
+    td = getattr(row, "trade_date", None)
+    if isinstance(td, date):
+        td = td.isoformat()
+    return {
+        "trade_date": td,
+        "stock_code": getattr(row, "stock_code", ""),
+        "sector_code": getattr(row, "sector_code", ""),
+        "open": float(getattr(row, "open", 0) or 0),
+        "close": float(getattr(row, "close", 0) or 0),
+        "high": float(getattr(row, "high", 0) or 0),
+        "low": float(getattr(row, "low", 0) or 0),
+        "pct_change": float(getattr(row, "pct_change", 0) or 0),
+        "volume": float(getattr(row, "volume", 0) or 0),
+        "money": float(getattr(row, "money", 0) or 0),
+        "is_limit_up": bool(getattr(row, "is_limit_up", False)),
+        "is_big_yang": bool(getattr(row, "is_big_yang", False)),
+        "is_blow_up": bool(getattr(row, "is_blow_up", False)),
+        "limit_up_streak": int(getattr(row, "limit_up_streak", 0) or 0),
+    }
+
+
+# 1970-01-01 / 1970-01-02 为 Unix epoch 附近日期，通常表示数据未正确设置，视为无效
+_EPOCH_CUTOFF = date(1970, 1, 3)
+
+
 def _parse_date(v: Any) -> Optional[date]:
     if v is None:
         return None
     if isinstance(v, date):
-        return v
-    return date.fromisoformat(str(v)[:10])
+        return v if v >= _EPOCH_CUTOFF else None
+    try:
+        parsed = date.fromisoformat(str(v)[:10])
+        return parsed if parsed >= _EPOCH_CUTOFF else None
+    except (ValueError, TypeError):
+        return None
 
 
 class LatestScanStore:
@@ -199,7 +233,23 @@ class LatestScanStore:
         market_cache_stats: Optional[dict[str, int]] = None,
         sector_dailies: dict[str, Any] | None = None,
         sector_flows: dict[str, Any] | None = None,
+        stocks_by_sector: dict[str, list[Any]] | None = None,
     ) -> Path:
+        # 防止 epoch 日期写入快照
+        if trade_date < _EPOCH_CUTOFF:
+            logger.error(
+                "[latest_scan] 拒绝写入 epoch trade_date=%s，回退为最近交易日",
+                trade_date,
+            )
+            try:
+                from app.services.trade_calendar import latest_completed_trade_day
+                trade_date = latest_completed_trade_day()
+            except Exception:
+                trade_date = date.today()
+        # 过滤 trade_days 中的 epoch 日期
+        scan_trade_days = [d for d in scan_trade_days if d >= _EPOCH_CUTOFF]
+        if not scan_trade_days:
+            scan_trade_days = [trade_date]
         leaders_ser = {code: _leader_to_dict(l) for code, l in leader_map.items()}
         payload: dict[str, Any] = {
             "version": SNAPSHOT_VERSION,
@@ -212,6 +262,7 @@ class LatestScanStore:
             "leaders": leaders_ser,
             "sector_dailies": {code: _sector_daily_to_dict(d) for code, d in (sector_dailies or {}).items()},
             "sector_flows": {code: _sector_flow_to_dict(f) for code, f in (sector_flows or {}).items()},
+            "stocks_by_sector": {code: [_stock_to_dict(s) for s in rows] for code, rows in (stocks_by_sector or {}).items()},
             "saved_at": datetime.now(timezone.utc).isoformat(),
         }
         if market_cache_stats:
@@ -240,10 +291,23 @@ class LatestScanStore:
 
         td = _parse_date(raw.get("trade_date"))
         if not td:
-            return None
+            # trade_date 为 epoch 或无效：尝试用 scan_end_date / scan_start_date 兜底，
+            # 否则回退到最近交易日
+            td = _parse_date(raw.get("scan_end_date")) or _parse_date(raw.get("scan_start_date"))
+            if not td:
+                try:
+                    from app.services.trade_calendar import latest_completed_trade_day
+                    td = latest_completed_trade_day()
+                except Exception:
+                    td = date.today()
+                logger.warning(
+                    "[latest_scan] trade_date 无效(epoch/空)，已回退为 %s", td
+                )
 
         trade_days = [_parse_date(x) for x in raw.get("trade_days") or []]
         trade_days = [d for d in trade_days if d]
+        if not trade_days:
+            trade_days = [td]
 
         env_dict = raw.get("market_env")
         env_row: LoadedMarketEnv | None = None
@@ -310,6 +374,11 @@ class LatestScanStore:
             if isinstance(f, dict):
                 sector_flows[code] = f
 
+        stocks_by_sector: dict[str, list[dict]] = {}
+        for code, rows in (raw.get("stocks_by_sector") or {}).items():
+            if isinstance(rows, list):
+                stocks_by_sector[code] = rows
+
         return LoadedLatestScan(
             trade_date=td,
             scan_start_date=_parse_date(raw.get("scan_start_date")),
@@ -321,6 +390,7 @@ class LatestScanStore:
             saved_at=raw.get("saved_at"),
             sector_dailies=sector_dailies,
             sector_flows=sector_flows,
+            stocks_by_sector=stocks_by_sector,
         )
 
     @staticmethod
@@ -356,6 +426,7 @@ class LatestScanStore:
                 scan_trade_days=loaded.trade_days,
                 sector_dailies=loaded.sector_dailies,
                 sector_flows=loaded.sector_flows,
+                stocks_by_sector=loaded.stocks_by_sector,
             )
         )
         logger.info("[latest_scan] 已从磁盘恢复仪表盘 trade_date=%s", loaded.trade_date)

@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, Dashboard as DashboardData, TaskStatus } from "../api";
+import { api, SectorList, TaskStatus } from "../api";
 import SectorScanPicker from "../components/SectorScanPicker";
 import { STAGE_LABEL } from "../utils";
 
 export default function ScanPanel() {
-  const [data, setData] = useState<DashboardData | null>(null);
+  const [data, setData] = useState<SectorList | null>(null);
   const [loading, setLoading] = useState(true);
   const [scanTask, setScanTask] = useState<TaskStatus | null>(null);
   const [error, setError] = useState("");
@@ -20,7 +20,7 @@ export default function ScanPanel() {
     setLoading(true);
     const td = tradeDate || viewDate || undefined;
     api
-      .dashboard(td)
+      .listSectors(td)
       .then((d) => {
         setData(d);
         if (d.trade_date) setViewDate(d.trade_date);
@@ -198,7 +198,7 @@ export default function ScanPanel() {
   };
 
   const maxStocksPerConcept = maxStocksPerConceptInput.trim() === "" ? 0 : (parseInt(maxStocksPerConceptInput, 10) || 0);
-  const sectors = data?.top_sectors ?? [];
+  const sectors = data?.sectors ?? [];
   const displayDate = data?.trade_date || viewDate;
 
   return (

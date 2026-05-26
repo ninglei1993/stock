@@ -51,6 +51,9 @@ class VolatileDashboardSnapshot:
     scan_trade_days: list[date] = field(default_factory=list)
     sector_dailies: dict[str, dict] = field(default_factory=dict)
     sector_flows: dict[str, dict] = field(default_factory=dict)
+    # 成分股快照：sector_code -> list[StockDaily-like dict]
+    # 用于在 VolatileTodayBuffer 被清空（如重启）后仍能回填详情页
+    stocks_by_sector: dict[str, list[Any]] = field(default_factory=dict)
 
 
 _lock = threading.Lock()

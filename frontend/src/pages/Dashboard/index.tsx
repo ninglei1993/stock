@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { api, Dashboard as DashboardData, LimitStockItem } from "../api";
-import { pctClass, formatPct, STAGE_LABEL, ENV_CONCLUSION_LABEL } from "../utils";
+import { api, Dashboard as DashboardData, LimitStockItem } from "../../api";
+import { pctClass, formatPct, ENV_CONCLUSION_LABEL } from "../../utils";
 
 function formatWanYi(v: number): string {
   if (!Number.isFinite(v)) return "0.00";
@@ -279,43 +278,6 @@ export default function Dashboard() {
             </div>
           )}
         </div>
-      )}
-
-      {/* Top 板块 */}
-      {data && data.top_sectors && data.top_sectors.length > 0 && (
-        <>
-          <h3 className="section-title">主线板块</h3>
-          <div className="sector-grid">
-            {data.top_sectors.map((s) => (
-              <Link
-                key={s.sector_code}
-                to={`/sectors/${encodeURIComponent(s.sector_code)}${displayDate ? `?trade_date=${displayDate}` : ""}`}
-                style={{ textDecoration: "none", color: "inherit" }}
-              >
-                <div className="sector-card">
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.5rem" }}>
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>{s.sector_name}</div>
-                      <div style={{ fontSize: "0.75rem", color: "var(--muted)", marginTop: "0.15rem" }}>
-                        {s.leader_stock_name || s.leader_stock || "—"}
-                        {s.leader_streak ? ` ${s.leader_streak}板` : ""}
-                      </div>
-                    </div>
-                    <span className={`stage-badge stage-${s.stage}`}>{STAGE_LABEL[s.stage] || s.stage}</span>
-                  </div>
-                  <div style={{ display: "flex", gap: "1rem", alignItems: "baseline" }}>
-                    <span className="score-big">{s.total_score.toFixed(1)}</span>
-                    {s.pct_change !== undefined && s.pct_change !== null && (
-                      <span className={pctClass(s.pct_change)} style={{ fontSize: "0.9rem", fontWeight: 600 }}>
-                        {formatPct(s.pct_change)}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
-        </>
       )}
 
       {limitOpen && (

@@ -193,33 +193,56 @@ def _build_stocks_in_sector(
 ) -> list:
     from app.schemas.common import StockInSector, StockPctDayOut
 
+    def _get(obj, key, default=None):
+        """Support both attribute access and dict-style get."""
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
+    def _get_date(obj, key):
+        """Get a date field, parsing ISO strings if needed."""
+        val = _get(obj, key)
+        if isinstance(val, date):
+            return val
+        if isinstance(val, str):
+            try:
+                return date.fromisoformat(val[:10])
+            except (ValueError, TypeError):
+                return None
+        return None
+
     by_key: dict[tuple[str, date], Any] = {}
     for r in rows:
-        if getattr(r, "sector_code", None) != sector_code:
+        if _get(r, "sector_code") != sector_code:
             continue
-        by_key[(r.stock_code, r.trade_date)] = r
+        sc = _get(r, "stock_code", "")
+        td_val = _get_date(r, "trade_date")
+        if td_val is None:
+            continue
+        by_key[(sc, td_val)] = r
 
     anchor_rows = [r for (code, d), r in by_key.items() if d == trade_date]
-    anchor_rows.sort(key=lambda r: r.pct_change, reverse=True)
+    anchor_rows.sort(key=lambda r: float(_get(r, "pct_change", 0) or 0), reverse=True)
 
     out: list[StockInSector] = []
-    # limit=0 约定为“展示全部”
+    # limit=0 约定为"展示全部"
     target_rows = anchor_rows if limit <= 0 else anchor_rows[:limit]
     for s in target_rows:
+        sc = _get(s, "stock_code", "")
         hist = [
-            StockPctDayOut(trade_date=d, pct_change=by_key[(s.stock_code, d)].pct_change)
+            StockPctDayOut(trade_date=d, pct_change=float(_get(by_key.get((sc, d)), "pct_change", 0) or 0))
             for d in display_days
-            if (s.stock_code, d) in by_key
+            if (sc, d) in by_key
         ]
         out.append(
             StockInSector(
-                stock_code=s.stock_code,
-                stock_name=getattr(s, "stock_name", None) or resolve_stock_name(s.stock_code),
-                pct_change=s.pct_change,
+                stock_code=sc,
+                stock_name=_get(s, "stock_name") or resolve_stock_name(sc),
+                pct_change=float(_get(s, "pct_change", 0) or 0),
                 pct_trade_date=trade_date,
-                is_limit_up=s.is_limit_up,
-                limit_up_streak=s.limit_up_streak,
-                money=s.money,
+                is_limit_up=bool(_get(s, "is_limit_up", False)),
+                limit_up_streak=int(_get(s, "limit_up_streak", 0) or 0),
+                money=float(_get(s, "money", 0) or 0),
                 pct_history=hist,
             )
         )
@@ -345,11 +368,23 @@ def _resolve_dashboard_snapshot():
 
     snap = get_dashboard_snapshot()
     if snap is not None:
-        return snap
+        # 快照 trade_date 为 epoch（如 1970-01-01）时视为无效，清除后重建
+        if snap.trade_date < date(1970, 1, 3):
+            import logging
+            logging.getLogger(__name__).warning(
+                "[数据] 内存快照 trade_date=%s 为 epoch，已清除", snap.trade_date
+            )
+            set_dashboard_snapshot(None)
+            snap = None
+        else:
+            return snap
     if not uses_file_scan_storage():
         return None
     loaded = LatestScanStore.load()
     if not loaded:
+        return None
+    # load() 已做 epoch 修正，但再保险一次
+    if loaded.trade_date < date(1970, 1, 3):
         return None
     snap = VolatileDashboardSnapshot(
         trade_date=loaded.trade_date,
@@ -447,7 +482,12 @@ def _build_data_missing_items(
     stocks: list[Any],
 ) -> list[str]:
     missing: list[str] = []
-    total_count = int(getattr(daily_row, "total_count", 0) or 0) if daily_row else 0
+    if daily_row is None:
+        total_count = 0
+    elif isinstance(daily_row, dict):
+        total_count = int(daily_row.get("total_count", 0) or 0)
+    else:
+        total_count = int(getattr(daily_row, "total_count", 0) or 0)
     if total_count <= 0 or not stocks:
         missing.append("成分股涨跌幅未获取（当日板块成分行情为空）")
         missing.append("涨停家数未获取（依赖成分股行情）")
@@ -1106,291 +1146,12 @@ def _fetch_index_summaries(adapter, td: date) -> list[dict[str, Any]]:
 
 
 @router.get("/dashboard", response_model=DashboardOut)
-async def dashboard(
-    trade_date: Optional[date] = None, db: AsyncSession = Depends(get_db)
-):
-    def _market_overview_from_cache(anchor: date, limit_up_count: int) -> Optional[dict]:
-        from app.services.market_cache import MarketTable, get_market_cache
+async def dashboard(trade_date: Optional[date] = None):
+    """仪表盘：仅展示市场总览 + 指数涨幅（不依赖扫盘数据）。"""
+    from app.services.dashboard_service import build_dashboard_response
 
-        def _is_a_share_code(ts_code: str) -> bool:
-            c = str(ts_code or "").strip().upper()
-            if len(c) < 3 or "." not in c:
-                return False
-            num, suffix = c.split(".", 1)
-            if suffix == "SH":
-                return num.startswith("6")
-            if suffix == "SZ":
-                return num.startswith(("0", "3"))
-            if suffix == "BJ":
-                return True
-            return False
-
-        def _apply_a_share_filter(src: pd.DataFrame) -> pd.DataFrame:
-            if src is None or src.empty:
-                return src
-            if "ts_code" not in src.columns:
-                return src
-            mask = src["ts_code"].astype(str).map(_is_a_share_code)
-            return src[mask].copy()
-
-        store = get_market_cache()
-        adapter = None
-        try:
-            df = store.load(MarketTable.DAILY, anchor)
-        except Exception:
-            df = None
-        if df is None or df.empty:
-            try:
-                adapter = get_adapter()
-                if hasattr(adapter, "_daily_market"):
-                    df = adapter._daily_market(anchor)  # type: ignore[attr-defined]
-            except Exception:
-                df = None
-        if df is None or df.empty:
-            return None
-        if not {"close", "pre_close", "amount"}.issubset(set(df.columns)):
-            return None
-        df = _apply_a_share_filter(df)
-        if df.empty:
-            return None
-        pre = pd.to_numeric(df["pre_close"], errors="coerce")
-        close = pd.to_numeric(df["close"], errors="coerce")
-        pct = ((close / pre) - 1.0) * 100.0
-        pct = pct.where(pre > 0)
-        pct = pct.fillna(0.0)
-        amount = pd.to_numeric(df["amount"], errors="coerce").fillna(0.0)
-        up_count = int((pct > 0).sum())
-        down_count = int((pct < 0).sum())
-        flat_count = int((pct == 0).sum())
-
-        # 涨跌停逐股口径：由 close 命中涨跌停价判定，并与涨跌幅分箱保持一致。
-        up_limit_flag = pd.Series(False, index=df.index)
-        down_limit_flag = pd.Series(False, index=df.index)
-        try:
-            lim_df = store.load(MarketTable.LIMIT, anchor)
-        except Exception:
-            lim_df = None
-        if (lim_df is None or lim_df.empty) and adapter is not None:
-            try:
-                if hasattr(adapter, "_limit_table"):
-                    lim_df = adapter._limit_table(anchor)  # type: ignore[attr-defined]
-            except Exception:
-                lim_df = None
-        if lim_df is not None and not lim_df.empty and {"ts_code", "up_limit", "down_limit"}.issubset(set(lim_df.columns)):
-            lim_sub = _apply_a_share_filter(lim_df)[["ts_code", "up_limit", "down_limit"]].copy()
-            if "ts_code" in df.columns and not lim_sub.empty:
-                merged = df[["ts_code"]].merge(lim_sub, on="ts_code", how="left")
-                up_lim = pd.to_numeric(merged["up_limit"], errors="coerce").round(2)
-                down_lim = pd.to_numeric(merged["down_limit"], errors="coerce").round(2)
-                close_round = close.round(2)
-                up_limit_flag = (close_round == up_lim) & up_lim.notna()
-                down_limit_flag = (close_round == down_lim) & down_lim.notna()
-        up_limit_count = int(up_limit_flag.sum())
-        down_limit_count = int(down_limit_flag.sum())
-        if up_limit_count == 0 and down_limit_count == 0:
-            # 兜底：当 limit 表不可用时，回落到适配器统计口径。
-            try:
-                adapter = adapter or get_adapter()
-                real_up, real_down = adapter.get_limit_counts(anchor)  # type: ignore[attr-defined]
-                up_limit_count = int(real_up or 0)
-                down_limit_count = int(real_down or 0)
-            except Exception:
-                pass
-        turnover_delta = 0.0
-        try:
-            days = [d for d in store.list_trade_days() if d < anchor]
-            prev_day = days[-1] if days else None
-            prev_df = None
-            if prev_day is None:
-                # 本地离线兜底：manifest 可能滞后，尝试直接从磁盘日线中回溯上一交易日。
-                for i in range(1, 15):
-                    cand = anchor - timedelta(days=i)
-                    try:
-                        cand_df = store.load(MarketTable.DAILY, cand)
-                    except Exception:
-                        cand_df = None
-                    if cand_df is not None and not cand_df.empty:
-                        prev_day = cand
-                        prev_df = cand_df
-                        break
-            if prev_day is None:
-                try:
-                    adapter = get_adapter()
-                    history_days = adapter.get_trade_days(anchor - timedelta(days=20), anchor)
-                    prior_days = [d for d in history_days if d < anchor]
-                    prev_day = prior_days[-1] if prior_days else None
-                except Exception:
-                    prev_day = None
-
-            if prev_day is not None:
-                if prev_df is None:
-                    prev_df = store.load(MarketTable.DAILY, prev_day)
-                if prev_df is None or prev_df.empty:
-                    try:
-                        adapter = adapter or get_adapter()
-                        if hasattr(adapter, "_daily_market"):
-                            prev_df = adapter._daily_market(prev_day)  # type: ignore[attr-defined]
-                    except Exception:
-                        prev_df = None
-                if prev_df is not None and not prev_df.empty and "amount" in prev_df.columns:
-                    prev_df = _apply_a_share_filter(prev_df)
-                    prev_amount = pd.to_numeric(prev_df["amount"], errors="coerce").fillna(0.0)
-                    turnover_delta = round(float((amount.sum() - prev_amount.sum()) / 1e5), 2)
-        except Exception:
-            pass
-        return {
-            "total_turnover_yi": round(float(amount.sum()) / 1e5, 2),
-            "turnover_delta_yi": turnover_delta,
-            "up_count": up_count,
-            "down_count": down_count,
-            "flat_count": flat_count,
-            "limit_up_count": up_limit_count,
-            "distribution": {
-                "down_limit": down_limit_count,
-                "neg_7_plus": int(((pct <= -7) & (~down_limit_flag)).sum()),
-                "neg_7_5": int(((pct > -7) & (pct <= -5) & (~down_limit_flag)).sum()),
-                "neg_5_3": int(((pct > -5) & (pct <= -3) & (~down_limit_flag)).sum()),
-                "neg_3_0": int(((pct > -3) & (pct < 0) & (~down_limit_flag)).sum()),
-                "flat": flat_count,
-                "pos_0_3": int(((pct > 0) & (pct < 3) & (~up_limit_flag)).sum()),
-                "pos_3_5": int(((pct >= 3) & (pct < 5) & (~up_limit_flag)).sum()),
-                "pos_5_7": int(((pct >= 5) & (pct < 7) & (~up_limit_flag)).sum()),
-                "pos_7_plus": int(((pct >= 7) & (~up_limit_flag)).sum()),
-                "up_limit": up_limit_count,
-            },
-        }
-
-    requested_td = _normalize_requested_trade_date(trade_date)
-    td = requested_td or await _latest_trade_date(db)
-    if not td:
-        return DashboardOut(trade_date=None, market_env=None, top_sectors=[])
-
-    snap = _resolve_dashboard_snapshot()
-    use_snap = False
-    if snap:
-        if requested_td is not None:
-            snap_td = snap.trade_date
-            snap_days = list(snap.scan_trade_days) if snap.scan_trade_days else []
-            use_snap = td == snap_td or (snap_days and td in snap_days)
-        elif snap.trade_date is not None:
-            use_snap = True
-            td = snap.trade_date
-    if snap and use_snap:
-        anchor = snap.trade_date or td
-        env_out = MarketEnvOut.model_validate(snap.env) if snap.env else None
-        leaders = snap.leader_map
-        pct_map: dict[str, float] = {}
-        overview = _market_overview_from_cache(
-            anchor,
-            int(getattr(snap.env, "limit_up_count", 0) or 0) if snap.env else 0,
-        )
-        if snap.scores:
-            from app.services.volatile_scan import get_today_buffer
-
-            buf = get_today_buffer()
-            if buf and buf.sector_rows:
-                for r in buf.sector_rows:
-                    if getattr(r, "trade_date", None) != anchor:
-                        continue
-                    pct = float(getattr(r, "pct_change", 0) or 0)
-                    pct_map[r.sector_code] = pct
-            if not pct_map:
-                snap_dailies = getattr(snap, "sector_dailies", None) or {}
-                for code, daily_d in snap_dailies.items():
-                    pct_map[code] = float(daily_d.get("pct_change", 0) or 0)
-        top = [
-            _sector_score_out(
-                s,
-                leaders.get(s.sector_code),
-                pct_change=pct_map.get(s.sector_code),
-                include_rules=True,
-            )
-            for s in sorted(snap.scores, key=lambda x: x.rank)
-        ]
-        indices = []
-        try:
-            adapter = get_adapter()
-            indices = await asyncio.to_thread(_fetch_index_summaries, adapter, anchor)
-        except Exception:
-            pass
-        return DashboardOut(
-            trade_date=anchor,
-            market_env=env_out,
-            top_sectors=top,
-            market_overview=overview
-            or {
-                "total_turnover_yi": 0.0,
-                "up_count": 0,
-                "down_count": 0,
-                "flat_count": 0,
-                "limit_up_count": int(getattr(snap.env, "limit_up_count", 0) or 0)
-                if snap.env
-                else 0,
-            },
-            indices=indices,
-        )
-
-    env_row = await db.get(MarketEnvDaily, td)
-    env_out = MarketEnvOut.model_validate(env_row) if env_row else None
-
-    daily_rows = (
-        await db.execute(select(SectorDaily).where(SectorDaily.trade_date == td))
-    ).scalars().all()
-    pct_map = {r.sector_code: float(r.pct_change or 0) for r in daily_rows}
-    overview = _market_overview_from_cache(
-        td, int(getattr(env_row, "limit_up_count", 0) or 0) if env_row else 0
-    )
-    money_total = sum(float(r.money or 0) for r in daily_rows)
-    up_count = sum(1 for r in daily_rows if (r.pct_change or 0) > 0)
-    down_count = sum(1 for r in daily_rows if (r.pct_change or 0) < 0)
-    flat_count = max(0, len(daily_rows) - up_count - down_count)
-
-    scores = (
-        await db.execute(
-            select(SectorScoreDaily)
-            .where(SectorScoreDaily.trade_date == td)
-            .order_by(SectorScoreDaily.rank)
-        )
-    ).scalars().all()
-
-    leaders = (
-        await db.execute(select(ThemeLeaderDaily).where(ThemeLeaderDaily.trade_date == td))
-    ).scalars().all()
-    leader_map = {l.sector_code: l for l in leaders}
-
-    top = [
-        _sector_score_out(
-            s,
-            leader_map.get(s.sector_code),
-            pct_change=pct_map.get(s.sector_code),
-            include_rules=False,
-        )
-        for s in scores
-    ]
-
-    indices = []
-    try:
-        adapter = get_adapter()
-        indices = await asyncio.to_thread(_fetch_index_summaries, adapter, td)
-    except Exception:
-        pass
-    return DashboardOut(
-        trade_date=td,
-        market_env=env_out,
-        top_sectors=top,
-        market_overview=overview
-        or {
-            # 回退口径：仅基于已扫描板块（用于缓存缺失时保底展示）
-            "total_turnover_yi": round(money_total / 1e5, 2),
-            "up_count": up_count,
-            "down_count": down_count,
-            "flat_count": flat_count,
-            "limit_up_count": int(getattr(env_row, "limit_up_count", 0) or 0)
-            if env_row
-            else 0,
-        },
-        indices=indices,
-    )
+    result = await build_dashboard_response(trade_date)
+    return DashboardOut(**result)
 
 
 @router.get("/dashboard/limit-stocks", response_model=LimitStockListOut)
@@ -1400,6 +1161,7 @@ async def dashboard_limit_stocks(
     db: AsyncSession = Depends(get_db),
 ):
     from app.services.market_cache import MarketTable, get_market_cache
+    from app.services.dashboard_service import resolve_dashboard_trade_date
 
     def _is_a_share_code(ts_code: str) -> bool:
         c = str(ts_code or "").strip().upper()
@@ -1414,7 +1176,7 @@ async def dashboard_limit_stocks(
             return True
         return False
 
-    td = _normalize_requested_trade_date(trade_date) or await _latest_trade_date(db)
+    td = resolve_dashboard_trade_date(trade_date)
     if not td:
         return LimitStockListOut(trade_date=None, side=side, total=0, items=[])
 
