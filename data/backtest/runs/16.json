@@ -1,0 +1,698 @@
+{
+  "run": {
+    "id": 16,
+    "status": "done",
+    "strategy_id": "a_strategy_strict",
+    "start_date": "2026-05-15",
+    "end_date": "2026-05-27",
+    "params": {
+      "sector_codes": [
+        "886033.TI"
+      ],
+      "initial_capital": 1000000
+    },
+    "progress": 9,
+    "total_days": 9,
+    "error_message": null,
+    "created_at": "2026-05-28T11:01:00.106919",
+    "finished_at": "2026-05-28T11:01:14.708192"
+  },
+  "trades": [],
+  "metrics": {
+    "run_id": 16,
+    "total_return": 0.0,
+    "annual_return": 0.0,
+    "max_drawdown": 0.0,
+    "sharpe": 0.0,
+    "win_rate": 0,
+    "trade_count": 0,
+    "fish_body_capture": 0.0,
+    "benchmark_return": -0.12,
+    "extra": {
+      "strategy": "a_strategy_strict",
+      "initial_capital": 1000000.0
+    },
+    "id": 0
+  },
+  "equity": [
+    {
+      "run_id": 16,
+      "trade_date": "2026-05-15",
+      "equity": 1000000.0,
+      "benchmark_equity": 988800.0,
+      "id": 0
+    },
+    {
+      "run_id": 16,
+      "trade_date": "2026-05-18",
+      "equity": 1000000.0,
+      "benchmark_equity": 983460.4800000001,
+      "id": 0
+    },
+    {
+      "run_id": 16,
+      "trade_date": "2026-05-19",
+      "equity": 1000000.0,
+      "benchmark_equity": 987394.3219200001,
+      "id": 0
+    },
+    {
+      "run_id": 16,
+      "trade_date": "2026-05-20",
+      "equity": 1000000.0,
+      "benchmark_equity": 986999.3641912321,
+      "id": 0
+    },
+    {
+      "run_id": 16,
+      "trade_date": "2026-05-21",
+      "equity": 1000000.0,
+      "benchmark_equity": 973280.073028974,
+      "id": 0
+    },
+    {
+      "run_id": 16,
+      "trade_date": "2026-05-22",
+      "equity": 1000000.0,
+      "benchmark_equity": 985932.7139783506,
+      "id": 0
+    },
+    {
+      "run_id": 16,
+      "trade_date": "2026-05-25",
+      "equity": 1000000.0,
+      "benchmark_equity": 1001510.4508592086,
+      "id": 0
+    },
+    {
+      "run_id": 16,
+      "trade_date": "2026-05-26",
+      "equity": 1000000.0,
+      "benchmark_equity": 1006818.4562487623,
+      "id": 0
+    },
+    {
+      "run_id": 16,
+      "trade_date": "2026-05-27",
+      "equity": 1000000.0,
+      "benchmark_equity": 998763.9085987721,
+      "id": 0
+    }
+  ],
+  "near_miss": [
+    {
+      "trade_date": "2026-05-15",
+      "sector_code": "886033.TI",
+      "sector_name": "886033.TI",
+      "pass_count": 0,
+      "total_rules": 6,
+      "all_passed": false,
+      "rules": [
+        {
+          "key": "trend_ma20_up",
+          "label": "趋势条件（站上MA20且MA20向上）",
+          "passed": false,
+          "threshold": "close > MA20 and MA20 > MA20_prev",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "pct_20d_tier",
+          "label": "20日涨幅分级",
+          "passed": false,
+          "threshold": ">=10%（>=18%为顶级主线）",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "volume_heat",
+          "label": "量能持续性",
+          "passed": false,
+          "threshold": "vol_ratio_5d>=1.6 and share8d>=4.5%",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "capital_inflow",
+          "label": "资金连续流入",
+          "passed": false,
+          "threshold": "主力连续6日净流入 and 北向5日净流入>=2亿",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "money_effect",
+          "label": "板块赚钱效应",
+          "passed": false,
+          "threshold": "up_ratio>=65%, max连板>=3, 涨停>=5",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "no_negative_news",
+          "label": "竞价与基本面无压制",
+          "passed": false,
+          "threshold": "竞价门槛通过且无监管利空/集体减持/政策降温",
+          "current": null,
+          "source": "auto"
+        }
+      ],
+      "passed_rule_labels": [],
+      "rule_fail_reasons": [
+        "当日未产出该板块评分，规则按未通过展示"
+      ],
+      "stage": "dormant",
+      "total_score": 0.0,
+      "is_main_line": false,
+      "main_line_tier": "rotation"
+    },
+    {
+      "trade_date": "2026-05-18",
+      "sector_code": "886033.TI",
+      "sector_name": "886033.TI",
+      "pass_count": 0,
+      "total_rules": 6,
+      "all_passed": false,
+      "rules": [
+        {
+          "key": "trend_ma20_up",
+          "label": "趋势条件（站上MA20且MA20向上）",
+          "passed": false,
+          "threshold": "close > MA20 and MA20 > MA20_prev",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "pct_20d_tier",
+          "label": "20日涨幅分级",
+          "passed": false,
+          "threshold": ">=10%（>=18%为顶级主线）",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "volume_heat",
+          "label": "量能持续性",
+          "passed": false,
+          "threshold": "vol_ratio_5d>=1.6 and share8d>=4.5%",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "capital_inflow",
+          "label": "资金连续流入",
+          "passed": false,
+          "threshold": "主力连续6日净流入 and 北向5日净流入>=2亿",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "money_effect",
+          "label": "板块赚钱效应",
+          "passed": false,
+          "threshold": "up_ratio>=65%, max连板>=3, 涨停>=5",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "no_negative_news",
+          "label": "竞价与基本面无压制",
+          "passed": false,
+          "threshold": "竞价门槛通过且无监管利空/集体减持/政策降温",
+          "current": null,
+          "source": "auto"
+        }
+      ],
+      "passed_rule_labels": [],
+      "rule_fail_reasons": [
+        "当日未产出该板块评分，规则按未通过展示"
+      ],
+      "stage": "dormant",
+      "total_score": 0.0,
+      "is_main_line": false,
+      "main_line_tier": "rotation"
+    },
+    {
+      "trade_date": "2026-05-19",
+      "sector_code": "886033.TI",
+      "sector_name": "886033.TI",
+      "pass_count": 0,
+      "total_rules": 6,
+      "all_passed": false,
+      "rules": [
+        {
+          "key": "trend_ma20_up",
+          "label": "趋势条件（站上MA20且MA20向上）",
+          "passed": false,
+          "threshold": "close > MA20 and MA20 > MA20_prev",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "pct_20d_tier",
+          "label": "20日涨幅分级",
+          "passed": false,
+          "threshold": ">=10%（>=18%为顶级主线）",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "volume_heat",
+          "label": "量能持续性",
+          "passed": false,
+          "threshold": "vol_ratio_5d>=1.6 and share8d>=4.5%",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "capital_inflow",
+          "label": "资金连续流入",
+          "passed": false,
+          "threshold": "主力连续6日净流入 and 北向5日净流入>=2亿",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "money_effect",
+          "label": "板块赚钱效应",
+          "passed": false,
+          "threshold": "up_ratio>=65%, max连板>=3, 涨停>=5",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "no_negative_news",
+          "label": "竞价与基本面无压制",
+          "passed": false,
+          "threshold": "竞价门槛通过且无监管利空/集体减持/政策降温",
+          "current": null,
+          "source": "auto"
+        }
+      ],
+      "passed_rule_labels": [],
+      "rule_fail_reasons": [
+        "当日未产出该板块评分，规则按未通过展示"
+      ],
+      "stage": "dormant",
+      "total_score": 0.0,
+      "is_main_line": false,
+      "main_line_tier": "rotation"
+    },
+    {
+      "trade_date": "2026-05-20",
+      "sector_code": "886033.TI",
+      "sector_name": "886033.TI",
+      "pass_count": 0,
+      "total_rules": 6,
+      "all_passed": false,
+      "rules": [
+        {
+          "key": "trend_ma20_up",
+          "label": "趋势条件（站上MA20且MA20向上）",
+          "passed": false,
+          "threshold": "close > MA20 and MA20 > MA20_prev",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "pct_20d_tier",
+          "label": "20日涨幅分级",
+          "passed": false,
+          "threshold": ">=10%（>=18%为顶级主线）",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "volume_heat",
+          "label": "量能持续性",
+          "passed": false,
+          "threshold": "vol_ratio_5d>=1.6 and share8d>=4.5%",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "capital_inflow",
+          "label": "资金连续流入",
+          "passed": false,
+          "threshold": "主力连续6日净流入 and 北向5日净流入>=2亿",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "money_effect",
+          "label": "板块赚钱效应",
+          "passed": false,
+          "threshold": "up_ratio>=65%, max连板>=3, 涨停>=5",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "no_negative_news",
+          "label": "竞价与基本面无压制",
+          "passed": false,
+          "threshold": "竞价门槛通过且无监管利空/集体减持/政策降温",
+          "current": null,
+          "source": "auto"
+        }
+      ],
+      "passed_rule_labels": [],
+      "rule_fail_reasons": [
+        "当日未产出该板块评分，规则按未通过展示"
+      ],
+      "stage": "dormant",
+      "total_score": 0.0,
+      "is_main_line": false,
+      "main_line_tier": "rotation"
+    },
+    {
+      "trade_date": "2026-05-21",
+      "sector_code": "886033.TI",
+      "sector_name": "886033.TI",
+      "pass_count": 0,
+      "total_rules": 6,
+      "all_passed": false,
+      "rules": [
+        {
+          "key": "trend_ma20_up",
+          "label": "趋势条件（站上MA20且MA20向上）",
+          "passed": false,
+          "threshold": "close > MA20 and MA20 > MA20_prev",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "pct_20d_tier",
+          "label": "20日涨幅分级",
+          "passed": false,
+          "threshold": ">=10%（>=18%为顶级主线）",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "volume_heat",
+          "label": "量能持续性",
+          "passed": false,
+          "threshold": "vol_ratio_5d>=1.6 and share8d>=4.5%",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "capital_inflow",
+          "label": "资金连续流入",
+          "passed": false,
+          "threshold": "主力连续6日净流入 and 北向5日净流入>=2亿",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "money_effect",
+          "label": "板块赚钱效应",
+          "passed": false,
+          "threshold": "up_ratio>=65%, max连板>=3, 涨停>=5",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "no_negative_news",
+          "label": "竞价与基本面无压制",
+          "passed": false,
+          "threshold": "竞价门槛通过且无监管利空/集体减持/政策降温",
+          "current": null,
+          "source": "auto"
+        }
+      ],
+      "passed_rule_labels": [],
+      "rule_fail_reasons": [
+        "当日未产出该板块评分，规则按未通过展示"
+      ],
+      "stage": "dormant",
+      "total_score": 0.0,
+      "is_main_line": false,
+      "main_line_tier": "rotation"
+    },
+    {
+      "trade_date": "2026-05-22",
+      "sector_code": "886033.TI",
+      "sector_name": "886033.TI",
+      "pass_count": 0,
+      "total_rules": 6,
+      "all_passed": false,
+      "rules": [
+        {
+          "key": "trend_ma20_up",
+          "label": "趋势条件（站上MA20且MA20向上）",
+          "passed": false,
+          "threshold": "close > MA20 and MA20 > MA20_prev",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "pct_20d_tier",
+          "label": "20日涨幅分级",
+          "passed": false,
+          "threshold": ">=10%（>=18%为顶级主线）",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "volume_heat",
+          "label": "量能持续性",
+          "passed": false,
+          "threshold": "vol_ratio_5d>=1.6 and share8d>=4.5%",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "capital_inflow",
+          "label": "资金连续流入",
+          "passed": false,
+          "threshold": "主力连续6日净流入 and 北向5日净流入>=2亿",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "money_effect",
+          "label": "板块赚钱效应",
+          "passed": false,
+          "threshold": "up_ratio>=65%, max连板>=3, 涨停>=5",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "no_negative_news",
+          "label": "竞价与基本面无压制",
+          "passed": false,
+          "threshold": "竞价门槛通过且无监管利空/集体减持/政策降温",
+          "current": null,
+          "source": "auto"
+        }
+      ],
+      "passed_rule_labels": [],
+      "rule_fail_reasons": [
+        "当日未产出该板块评分，规则按未通过展示"
+      ],
+      "stage": "dormant",
+      "total_score": 0.0,
+      "is_main_line": false,
+      "main_line_tier": "rotation"
+    },
+    {
+      "trade_date": "2026-05-25",
+      "sector_code": "886033.TI",
+      "sector_name": "886033.TI",
+      "pass_count": 0,
+      "total_rules": 6,
+      "all_passed": false,
+      "rules": [
+        {
+          "key": "trend_ma20_up",
+          "label": "趋势条件（站上MA20且MA20向上）",
+          "passed": false,
+          "threshold": "close > MA20 and MA20 > MA20_prev",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "pct_20d_tier",
+          "label": "20日涨幅分级",
+          "passed": false,
+          "threshold": ">=10%（>=18%为顶级主线）",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "volume_heat",
+          "label": "量能持续性",
+          "passed": false,
+          "threshold": "vol_ratio_5d>=1.6 and share8d>=4.5%",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "capital_inflow",
+          "label": "资金连续流入",
+          "passed": false,
+          "threshold": "主力连续6日净流入 and 北向5日净流入>=2亿",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "money_effect",
+          "label": "板块赚钱效应",
+          "passed": false,
+          "threshold": "up_ratio>=65%, max连板>=3, 涨停>=5",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "no_negative_news",
+          "label": "竞价与基本面无压制",
+          "passed": false,
+          "threshold": "竞价门槛通过且无监管利空/集体减持/政策降温",
+          "current": null,
+          "source": "auto"
+        }
+      ],
+      "passed_rule_labels": [],
+      "rule_fail_reasons": [
+        "当日未产出该板块评分，规则按未通过展示"
+      ],
+      "stage": "dormant",
+      "total_score": 0.0,
+      "is_main_line": false,
+      "main_line_tier": "rotation"
+    },
+    {
+      "trade_date": "2026-05-26",
+      "sector_code": "886033.TI",
+      "sector_name": "886033.TI",
+      "pass_count": 0,
+      "total_rules": 6,
+      "all_passed": false,
+      "rules": [
+        {
+          "key": "trend_ma20_up",
+          "label": "趋势条件（站上MA20且MA20向上）",
+          "passed": false,
+          "threshold": "close > MA20 and MA20 > MA20_prev",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "pct_20d_tier",
+          "label": "20日涨幅分级",
+          "passed": false,
+          "threshold": ">=10%（>=18%为顶级主线）",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "volume_heat",
+          "label": "量能持续性",
+          "passed": false,
+          "threshold": "vol_ratio_5d>=1.6 and share8d>=4.5%",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "capital_inflow",
+          "label": "资金连续流入",
+          "passed": false,
+          "threshold": "主力连续6日净流入 and 北向5日净流入>=2亿",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "money_effect",
+          "label": "板块赚钱效应",
+          "passed": false,
+          "threshold": "up_ratio>=65%, max连板>=3, 涨停>=5",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "no_negative_news",
+          "label": "竞价与基本面无压制",
+          "passed": false,
+          "threshold": "竞价门槛通过且无监管利空/集体减持/政策降温",
+          "current": null,
+          "source": "auto"
+        }
+      ],
+      "passed_rule_labels": [],
+      "rule_fail_reasons": [
+        "当日未产出该板块评分，规则按未通过展示"
+      ],
+      "stage": "dormant",
+      "total_score": 0.0,
+      "is_main_line": false,
+      "main_line_tier": "rotation"
+    },
+    {
+      "trade_date": "2026-05-27",
+      "sector_code": "886033.TI",
+      "sector_name": "886033.TI",
+      "pass_count": 0,
+      "total_rules": 6,
+      "all_passed": false,
+      "rules": [
+        {
+          "key": "trend_ma20_up",
+          "label": "趋势条件（站上MA20且MA20向上）",
+          "passed": false,
+          "threshold": "close > MA20 and MA20 > MA20_prev",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "pct_20d_tier",
+          "label": "20日涨幅分级",
+          "passed": false,
+          "threshold": ">=10%（>=18%为顶级主线）",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "volume_heat",
+          "label": "量能持续性",
+          "passed": false,
+          "threshold": "vol_ratio_5d>=1.6 and share8d>=4.5%",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "capital_inflow",
+          "label": "资金连续流入",
+          "passed": false,
+          "threshold": "主力连续6日净流入 and 北向5日净流入>=2亿",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "money_effect",
+          "label": "板块赚钱效应",
+          "passed": false,
+          "threshold": "up_ratio>=65%, max连板>=3, 涨停>=5",
+          "current": null,
+          "source": "auto"
+        },
+        {
+          "key": "no_negative_news",
+          "label": "竞价与基本面无压制",
+          "passed": false,
+          "threshold": "竞价门槛通过且无监管利空/集体减持/政策降温",
+          "current": null,
+          "source": "auto"
+        }
+      ],
+      "passed_rule_labels": [],
+      "rule_fail_reasons": [
+        "当日未产出该板块评分，规则按未通过展示"
+      ],
+      "stage": "dormant",
+      "total_score": 0.0,
+      "is_main_line": false,
+      "main_line_tier": "rotation"
+    }
+  ]
+}

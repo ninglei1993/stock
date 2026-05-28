@@ -1,215 +1,181 @@
+"""数据模型 — 纯 dataclass（不依赖 SQLAlchemy / 数据库）。
+
+所有模型仅用于进程内内存缓冲和 JSON 序列化，字段保持向后兼容。
+"""
+
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import (
-    Date,
-    DateTime,
-    Float,
-    Integer,
-    String,
-    Text,
-    UniqueConstraint,
-    func,
-)
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column
 
-from app.database import Base
+@dataclass
+class TradeCalendar:
+    trade_date: date
+    is_open: bool = True
 
 
-class TradeCalendar(Base):
-    __tablename__ = "trade_calendar"
-
-    trade_date: Mapped[date] = mapped_column(Date, primary_key=True)
-    is_open: Mapped[bool] = mapped_column(default=True)
-
-
-class SectorDaily(Base):
-    __tablename__ = "sector_daily"
-    __table_args__ = (UniqueConstraint("trade_date", "sector_code", name="uq_sector_daily"),)
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    trade_date: Mapped[date] = mapped_column(Date, index=True)
-    sector_code: Mapped[str] = mapped_column(String(32), index=True)
-    sector_name: Mapped[str] = mapped_column(String(128))
-    sector_type: Mapped[str] = mapped_column(String(16), default="concept")
-    open: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    close: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    high: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    low: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    pct_change: Mapped[float] = mapped_column(Float, default=0.0)
-    volume: Mapped[float] = mapped_column(Float, default=0.0)
-    money: Mapped[float] = mapped_column(Float, default=0.0)
-    limit_up_count: Mapped[int] = mapped_column(Integer, default=0)
-    big_yang_count: Mapped[int] = mapped_column(Integer, default=0)
-    up_count: Mapped[int] = mapped_column(Integer, default=0)
-    total_count: Mapped[int] = mapped_column(Integer, default=0)
-    blow_up_rate: Mapped[float] = mapped_column(Float, default=0.0)
+@dataclass
+class SectorDaily:
+    trade_date: date = date(1970, 1, 1)
+    sector_code: str = ""
+    sector_name: str = ""
+    sector_type: str = "concept"
+    open: Optional[float] = None
+    close: Optional[float] = None
+    high: Optional[float] = None
+    low: Optional[float] = None
+    pct_change: float = 0.0
+    volume: float = 0.0
+    money: float = 0.0
+    limit_up_count: int = 0
+    big_yang_count: int = 0
+    up_count: int = 0
+    total_count: int = 0
+    blow_up_rate: float = 0.0
 
 
-class SectorFlowDaily(Base):
-    __tablename__ = "sector_flow_daily"
-    __table_args__ = (UniqueConstraint("trade_date", "sector_code", name="uq_sector_flow"),)
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    trade_date: Mapped[date] = mapped_column(Date, index=True)
-    sector_code: Mapped[str] = mapped_column(String(32), index=True)
-    net_inflow_main: Mapped[float] = mapped_column(Float, default=0.0)
-    inflow_days: Mapped[int] = mapped_column(Integer, default=0)
+@dataclass
+class SectorFlowDaily:
+    trade_date: date = date(1970, 1, 1)
+    sector_code: str = ""
+    net_inflow_main: float = 0.0
+    inflow_days: int = 0
 
 
-class StockDaily(Base):
-    __tablename__ = "stock_daily"
-    __table_args__ = (
-        UniqueConstraint("trade_date", "stock_code", "sector_code", name="uq_stock_daily"),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    trade_date: Mapped[date] = mapped_column(Date, index=True)
-    stock_code: Mapped[str] = mapped_column(String(32), index=True)
-    sector_code: Mapped[str] = mapped_column(String(32), index=True)
-    open: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    close: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    high: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    low: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    pct_change: Mapped[float] = mapped_column(Float, default=0.0)
-    volume: Mapped[float] = mapped_column(Float, default=0.0)
-    money: Mapped[float] = mapped_column(Float, default=0.0)
-    is_limit_up: Mapped[bool] = mapped_column(default=False)
-    is_big_yang: Mapped[bool] = mapped_column(default=False)
-    is_blow_up: Mapped[bool] = mapped_column(default=False)
-    limit_up_streak: Mapped[int] = mapped_column(Integer, default=0)
+@dataclass
+class StockDaily:
+    trade_date: date = date(1970, 1, 1)
+    stock_code: str = ""
+    sector_code: str = ""
+    open: Optional[float] = None
+    close: Optional[float] = None
+    high: Optional[float] = None
+    low: Optional[float] = None
+    pct_change: float = 0.0
+    volume: float = 0.0
+    money: float = 0.0
+    is_limit_up: bool = False
+    is_big_yang: bool = False
+    is_blow_up: bool = False
+    limit_up_streak: int = 0
 
 
-class SectorScoreDaily(Base):
-    __tablename__ = "sector_score_daily"
-    __table_args__ = (UniqueConstraint("trade_date", "sector_code", name="uq_sector_score"),)
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    trade_date: Mapped[date] = mapped_column(Date, index=True)
-    sector_code: Mapped[str] = mapped_column(String(32), index=True)
-    sector_name: Mapped[str] = mapped_column(String(128))
-    total_score: Mapped[float] = mapped_column(Float, default=0.0)
-    persistence_score: Mapped[float] = mapped_column(Float, default=0.0)
-    capital_score: Mapped[float] = mapped_column(Float, default=0.0)
-    breadth_score: Mapped[float] = mapped_column(Float, default=0.0)
-    leader_score: Mapped[float] = mapped_column(Float, default=0.0)
-    relative_score: Mapped[float] = mapped_column(Float, default=0.0)
-    stage: Mapped[str] = mapped_column(String(16), default="dormant")
-    rank: Mapped[int] = mapped_column(Integer, default=0)
-    is_filtered: Mapped[bool] = mapped_column(default=False)
-    filter_reason: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
-    position_hint: Mapped[str] = mapped_column(String(32), default="observe")
-    is_main_line: Mapped[bool] = mapped_column(default=False)
-    main_line_tier: Mapped[str] = mapped_column(String(16), default="rotation")
-    confirm_state: Mapped[str] = mapped_column(String(16), default="pending")
-    exit_state: Mapped[str] = mapped_column(String(16), default="normal")
-    rules_json: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    rule_fail_reasons: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    source_tag: Mapped[str] = mapped_column(String(16), default="auto")
+@dataclass
+class SectorScoreDaily:
+    trade_date: date = date(1970, 1, 1)
+    sector_code: str = ""
+    sector_name: str = ""
+    total_score: float = 0.0
+    persistence_score: float = 0.0
+    capital_score: float = 0.0
+    breadth_score: float = 0.0
+    leader_score: float = 0.0
+    relative_score: float = 0.0
+    stage: str = "dormant"
+    rank: int = 0
+    is_filtered: bool = False
+    filter_reason: Optional[str] = None
+    position_hint: str = "observe"
+    is_main_line: bool = False
+    main_line_tier: str = "rotation"
+    confirm_state: str = "pending"
+    exit_state: str = "normal"
+    rules_json: Optional[list] = None
+    rule_fail_reasons: Optional[str] = None
+    source_tag: str = "auto"
 
 
-class ThemeLeaderDaily(Base):
-    __tablename__ = "theme_leader_daily"
-    __table_args__ = (UniqueConstraint("trade_date", "sector_code", name="uq_theme_leader"),)
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    trade_date: Mapped[date] = mapped_column(Date, index=True)
-    sector_code: Mapped[str] = mapped_column(String(32), index=True)
-    stock_code: Mapped[str] = mapped_column(String(32))
-    stock_name: Mapped[str] = mapped_column(String(64), default="")
-    limit_up_streak: Mapped[int] = mapped_column(Integer, default=0)
-    pct_change: Mapped[float] = mapped_column(Float, default=0.0)
-    money: Mapped[float] = mapped_column(Float, default=0.0)
+@dataclass
+class ThemeLeaderDaily:
+    trade_date: date = date(1970, 1, 1)
+    sector_code: str = ""
+    stock_code: str = ""
+    stock_name: str = ""
+    limit_up_streak: int = 0
+    pct_change: float = 0.0
+    money: float = 0.0
 
 
-class Alert(Base):
-    __tablename__ = "alerts"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    trade_date: Mapped[date] = mapped_column(Date, index=True)
-    sector_code: Mapped[str] = mapped_column(String(32), index=True)
-    sector_name: Mapped[str] = mapped_column(String(128))
-    alert_code: Mapped[str] = mapped_column(String(32), index=True)
-    human_reason: Mapped[str] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-
-
-class MarketEnvDaily(Base):
-    __tablename__ = "market_env_daily"
-
-    trade_date: Mapped[date] = mapped_column(Date, primary_key=True)
-    env_score: Mapped[float] = mapped_column(Float, default=50.0)
-    limit_up_count: Mapped[int] = mapped_column(Integer, default=0)
-    up_down_ratio: Mapped[float] = mapped_column(Float, default=0.5)
-    index_pct: Mapped[float] = mapped_column(Float, default=0.0)
-    conclusion: Mapped[str] = mapped_column(String(32), default="caution")
-    can_long: Mapped[bool] = mapped_column(default=True)
+@dataclass
+class Alert:
+    trade_date: date = date(1970, 1, 1)
+    sector_code: str = ""
+    sector_name: str = ""
+    alert_code: str = ""
+    human_reason: str = ""
+    created_at: Optional[datetime] = None
+    id: Optional[int] = None
 
 
-class BacktestRun(Base):
-    __tablename__ = "backtest_runs"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    status: Mapped[str] = mapped_column(String(16), default="pending")
-    strategy_id: Mapped[str] = mapped_column(String(32))
-    start_date: Mapped[date] = mapped_column(Date)
-    end_date: Mapped[date] = mapped_column(Date)
-    params: Mapped[dict] = mapped_column(JSONB, default=dict)
-    progress: Mapped[int] = mapped_column(Integer, default=0)
-    total_days: Mapped[int] = mapped_column(Integer, default=0)
-    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+@dataclass
+class MarketEnvDaily:
+    trade_date: date = date(1970, 1, 1)
+    env_score: float = 50.0
+    limit_up_count: int = 0
+    up_down_ratio: float = 0.5
+    index_pct: float = 0.0
+    conclusion: str = "caution"
+    can_long: bool = True
 
 
-class BacktestTrade(Base):
-    __tablename__ = "backtest_trades"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    run_id: Mapped[int] = mapped_column(Integer, index=True)
-    sector_code: Mapped[str] = mapped_column(String(32))
-    sector_name: Mapped[str] = mapped_column(String(128))
-    stock_code: Mapped[str] = mapped_column(String(32))
-    stock_name: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    sell_stock_code: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
-    sell_stock_name: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    alert_code: Mapped[str] = mapped_column(String(32))
-    signal_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
-    entry_date: Mapped[date] = mapped_column(Date)
-    exit_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
-    entry_price: Mapped[float] = mapped_column(Float)
-    exit_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    return_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    holding_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    trade_mode: Mapped[str] = mapped_column(String(32), default="板块龙头个股")
-    human_reason: Mapped[str] = mapped_column(Text, default="")
-    entry_scores: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    exit_scores: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+@dataclass
+class BacktestRun:
+    id: int = 0
+    status: str = "pending"
+    strategy_id: str = ""
+    start_date: date = date(1970, 1, 1)
+    end_date: date = date(1970, 1, 1)
+    params: dict = field(default_factory=dict)
+    progress: int = 0
+    total_days: int = 0
+    error_message: Optional[str] = None
+    created_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
 
 
-class BacktestMetric(Base):
-    __tablename__ = "backtest_metrics"
+@dataclass
+class BacktestTrade:
+    run_id: int = 0
+    sector_code: str = ""
+    sector_name: str = ""
+    stock_code: str = ""
+    stock_name: Optional[str] = None
+    sell_stock_code: Optional[str] = None
+    sell_stock_name: Optional[str] = None
+    alert_code: str = ""
+    signal_date: Optional[date] = None
+    entry_date: date = date(1970, 1, 1)
+    exit_date: Optional[date] = None
+    entry_price: float = 0.0
+    exit_price: Optional[float] = None
+    return_pct: Optional[float] = None
+    holding_days: Optional[int] = None
+    trade_mode: str = "板块龙头个股"
+    human_reason: str = ""
+    entry_scores: Optional[dict] = None
+    exit_scores: Optional[dict] = None
+    id: int = 0
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    run_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
-    total_return: Mapped[float] = mapped_column(Float, default=0.0)
-    annual_return: Mapped[float] = mapped_column(Float, default=0.0)
-    max_drawdown: Mapped[float] = mapped_column(Float, default=0.0)
-    sharpe: Mapped[float] = mapped_column(Float, default=0.0)
-    win_rate: Mapped[float] = mapped_column(Float, default=0.0)
-    trade_count: Mapped[int] = mapped_column(Integer, default=0)
-    fish_body_capture: Mapped[float] = mapped_column(Float, default=0.0)
-    benchmark_return: Mapped[float] = mapped_column(Float, default=0.0)
-    extra: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+@dataclass
+class BacktestMetric:
+    run_id: int = 0
+    total_return: float = 0.0
+    annual_return: float = 0.0
+    max_drawdown: float = 0.0
+    sharpe: float = 0.0
+    win_rate: float = 0.0
+    trade_count: int = 0
+    fish_body_capture: float = 0.0
+    benchmark_return: float = 0.0
+    extra: dict = field(default_factory=dict)
+    id: int = 0
 
 
-class BacktestEquityDaily(Base):
-    __tablename__ = "backtest_equity_daily"
-    __table_args__ = (UniqueConstraint("run_id", "trade_date", name="uq_bt_equity"),)
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    run_id: Mapped[int] = mapped_column(Integer, index=True)
-    trade_date: Mapped[date] = mapped_column(Date)
-    equity: Mapped[float] = mapped_column(Float)
-    benchmark_equity: Mapped[float] = mapped_column(Float, default=1.0)
+@dataclass
+class BacktestEquityDaily:
+    run_id: int = 0
+    trade_date: date = date(1970, 1, 1)
+    equity: float = 0.0
+    benchmark_equity: float = 1.0
+    id: int = 0

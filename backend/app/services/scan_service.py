@@ -1,7 +1,5 @@
 from datetime import date, timedelta
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.config import settings
 from app.services.storage_mode import uses_scan_memory_buffer
 from app.models.tables import SectorScoreDaily
@@ -25,8 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class ScanService:
-    def __init__(self, session: AsyncSession, scoring_mode: str | None = None):
-        self.session = session
+    def __init__(self, scoring_mode: str | None = None):
         self.scoring_mode = scoring_mode or settings.effective_scoring_mode()
         self.engine = get_scoring_engine(self.scoring_mode)
         self.risk = RiskModule()
@@ -93,18 +90,14 @@ class ScanService:
                 }
 
         lookback_start = trade_date - timedelta(days=60)
-        daily_all = await merge_sector_daily(
-            self.session, lookback_start, trade_date
-        )
+        daily_all = merge_sector_daily(lookback_start, trade_date)
 
-        flow_all = await merge_sector_flow(
-            self.session, lookback_start, trade_date
-        )
+        flow_all = merge_sector_flow(lookback_start, trade_date)
 
-        leaders = await merge_leaders(self.session, trade_date)
+        leaders = merge_leaders(trade_date)
         leader_map = {l.sector_code: l for l in leaders}
 
-        env_row = await get_market_env_merged(self.session, trade_date)
+        env_row = get_market_env_merged(trade_date)
         index_pct = env_row.index_pct if env_row else 0.0
 
         sectors_today = {r.sector_code for r in daily_all if r.trade_date == trade_date}
@@ -258,7 +251,7 @@ class ScanService:
 
         env_bad = False
         if env_row:
-            prev_env = await get_market_env_merged(self.session, yesterday)
+            prev_env = get_market_env_merged(yesterday)
             if prev_env and env_row.env_score < 40 and env_row.env_score < prev_env.env_score - 20:
                 env_bad = True
 

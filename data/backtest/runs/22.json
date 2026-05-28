@@ -1,0 +1,1858 @@
+{
+  "run": {
+    "id": 22,
+    "status": "done",
+    "strategy_id": "a_strategy_strict",
+    "start_date": "2026-05-14",
+    "end_date": "2026-05-28",
+    "params": {
+      "sector_codes": [
+        "886033.TI"
+      ],
+      "initial_capital": 1000000
+    },
+    "progress": 11,
+    "total_days": 11,
+    "error_message": null,
+    "created_at": "2026-05-28T12:32:11.621771",
+    "finished_at": "2026-05-28T12:32:38.611542"
+  },
+  "trades": [],
+  "metrics": {
+    "run_id": 22,
+    "total_return": 0.0,
+    "annual_return": 0.0,
+    "max_drawdown": 0.0,
+    "sharpe": 0.0,
+    "win_rate": 0,
+    "trade_count": 0,
+    "fish_body_capture": 0.0,
+    "benchmark_return": -1.68,
+    "extra": {
+      "strategy": "a_strategy_strict",
+      "initial_capital": 1000000.0
+    },
+    "id": 0
+  },
+  "equity": [
+    {
+      "run_id": 22,
+      "trade_date": "2026-05-14",
+      "equity": 1000000.0,
+      "benchmark_equity": 983200.0,
+      "id": 0
+    },
+    {
+      "run_id": 22,
+      "trade_date": "2026-05-15",
+      "equity": 1000000.0,
+      "benchmark_equity": 972188.1599999999,
+      "id": 0
+    },
+    {
+      "run_id": 22,
+      "trade_date": "2026-05-18",
+      "equity": 1000000.0,
+      "benchmark_equity": 966938.343936,
+      "id": 0
+    },
+    {
+      "run_id": 22,
+      "trade_date": "2026-05-19",
+      "equity": 1000000.0,
+      "benchmark_equity": 970806.097311744,
+      "id": 0
+    },
+    {
+      "run_id": 22,
+      "trade_date": "2026-05-20",
+      "equity": 1000000.0,
+      "benchmark_equity": 970417.7748728193,
+      "id": 0
+    },
+    {
+      "run_id": 22,
+      "trade_date": "2026-05-21",
+      "equity": 1000000.0,
+      "benchmark_equity": 956928.9678020872,
+      "id": 0
+    },
+    {
+      "run_id": 22,
+      "trade_date": "2026-05-22",
+      "equity": 1000000.0,
+      "benchmark_equity": 969369.0443835141,
+      "id": 0
+    },
+    {
+      "run_id": 22,
+      "trade_date": "2026-05-25",
+      "equity": 1000000.0,
+      "benchmark_equity": 984685.0752847737,
+      "id": 0
+    },
+    {
+      "run_id": 22,
+      "trade_date": "2026-05-26",
+      "equity": 1000000.0,
+      "benchmark_equity": 989903.9061837831,
+      "id": 0
+    },
+    {
+      "run_id": 22,
+      "trade_date": "2026-05-27",
+      "equity": 1000000.0,
+      "benchmark_equity": 981984.6749343128,
+      "id": 0
+    },
+    {
+      "run_id": 22,
+      "trade_date": "2026-05-28",
+      "equity": 1000000.0,
+      "benchmark_equity": 983163.056544234,
+      "id": 0
+    }
+  ],
+  "near_miss": [
+    {
+      "trade_date": "2026-05-14",
+      "sector_code": "886033.TI",
+      "sector_name": "共封装光学(CPO)",
+      "pass_count": 3,
+      "total_rules": 6,
+      "all_passed": false,
+      "rules": [
+        {
+          "key": "trend_ma20_up",
+          "label": "趋势条件（站上MA20且MA20向上）",
+          "passed": true,
+          "threshold": "close > MA20 and MA20 > MA20_prev",
+          "current": {
+            "close": 6343.019,
+            "ma20": 5644.2712,
+            "ma20_prev": 5575.917
+          },
+          "source": "auto"
+        },
+        {
+          "key": "pct_20d_tier",
+          "label": "20日涨幅分级",
+          "passed": true,
+          "threshold": ">=10%（>=18%为顶级主线）",
+          "current": {
+            "pct_20d": 27.4739,
+            "tier": "top"
+          },
+          "source": "auto"
+        },
+        {
+          "key": "volume_heat",
+          "label": "量能持续性",
+          "passed": false,
+          "threshold": "vol_ratio_5d>=1.6 and share8d>=4.5%",
+          "current": {
+            "vol_ratio_5d": 1.0332,
+            "share_8d_ok": false,
+            "share_history": [
+              18.1585
+            ],
+            "vol_ratio_debug": {
+              "vol_last": 95058999.0,
+              "vol_ma5": 92001901.0,
+              "vol_values_last6": [
+                84847145.0,
+                81034635.0,
+                96510596.0,
+                95268719.0,
+                92136556.0,
+                95058999.0
+              ]
+            },
+            "share_8d_debug": [
+              {
+                "trade_date": "2026-05-14",
+                "sector_money": 615224829.392,
+                "market_money": 3388086341.1759996,
+                "share_pct": 18.158475535734322
+              }
+            ]
+          },
+          "source": "auto"
+        },
+        {
+          "key": "capital_inflow",
+          "label": "资金连续流入",
+          "passed": false,
+          "threshold": "主力连续6日净流入 and 北向5日净流入>=2亿",
+          "current": {
+            "main_inflow_streak_days": 0,
+            "northbound_5d_yi": null,
+            "net_inflow_history_tail": [
+              -2071886.16
+            ]
+          },
+          "source": "auto"
+        },
+        {
+          "key": "money_effect",
+          "label": "板块赚钱效应",
+          "passed": false,
+          "threshold": "up_ratio>=65%, max连板>=3, 涨停>=5",
+          "current": {
+            "up_ratio": 0.2926,
+            "max_limit_up_streak": 1,
+            "limit_up_count": 6
+          },
+          "source": "auto"
+        },
+        {
+          "key": "no_negative_news",
+          "label": "竞价与基本面无压制",
+          "passed": true,
+          "threshold": "竞价门槛通过且无监管利空/集体减持/政策降温",
+          "current": {
+            "negative_news": false,
+            "auction_passed": true
+          },
+          "source": "manual"
+        }
+      ],
+      "passed_rule_labels": [
+        "趋势条件（站上MA20且MA20向上）",
+        "20日涨幅分级",
+        "竞价与基本面无压制"
+      ],
+      "rule_fail_reasons": [
+        "量能持续性",
+        "资金连续流入",
+        "板块赚钱效应"
+      ],
+      "stage": "dormant",
+      "total_score": 50.0,
+      "is_main_line": false,
+      "main_line_tier": "top",
+      "env_score": 45,
+      "can_long": true,
+      "confirm_state": "pending",
+      "exit_state": "normal"
+    },
+    {
+      "trade_date": "2026-05-15",
+      "sector_code": "886033.TI",
+      "sector_name": "共封装光学(CPO)",
+      "pass_count": 3,
+      "total_rules": 6,
+      "all_passed": false,
+      "rules": [
+        {
+          "key": "trend_ma20_up",
+          "label": "趋势条件（站上MA20且MA20向上）",
+          "passed": true,
+          "threshold": "close > MA20 and MA20 > MA20_prev",
+          "current": {
+            "close": 6254.164,
+            "ma20": 5703.1062,
+            "ma20_prev": 5644.2712
+          },
+          "source": "auto"
+        },
+        {
+          "key": "pct_20d_tier",
+          "label": "20日涨幅分级",
+          "passed": true,
+          "threshold": ">=10%（>=18%为顶级主线）",
+          "current": {
+            "pct_20d": 23.175,
+            "tier": "top"
+          },
+          "source": "auto"
+        },
+        {
+          "key": "volume_heat",
+          "label": "量能持续性",
+          "passed": false,
+          "threshold": "vol_ratio_5d>=1.6 and share8d>=4.5%",
+          "current": {
+            "vol_ratio_5d": 0.9991,
+            "share_8d_ok": false,
+            "share_history": [
+              18.1585,
+              17.6673
+            ],
+            "vol_ratio_debug": {
+              "vol_last": 94634934.0,
+              "vol_ma5": 94721960.8,
+              "vol_values_last6": [
+                81034635.0,
+                96510596.0,
+                95268719.0,
+                92136556.0,
+                95058999.0,
+                94634934.0
+              ]
+            },
+            "share_8d_debug": [
+              {
+                "trade_date": "2026-05-14",
+                "sector_money": 615224829.392,
+                "market_money": 3388086341.1759996,
+                "share_pct": 18.158475535734322
+              },
+              {
+                "trade_date": "2026-05-15",
+                "sector_money": 595430112.736,
+                "market_money": 3370232295.625,
+                "share_pct": 17.667331522190494
+              }
+            ]
+          },
+          "source": "auto"
+        },
+        {
+          "key": "capital_inflow",
+          "label": "资金连续流入",
+          "passed": false,
+          "threshold": "主力连续6日净流入 and 北向5日净流入>=2亿",
+          "current": {
+            "main_inflow_streak_days": 0,
+            "northbound_5d_yi": null,
+            "net_inflow_history_tail": [
+              -2071886.16,
+              -3363350.58
+            ]
+          },
+          "source": "auto"
+        },
+        {
+          "key": "money_effect",
+          "label": "板块赚钱效应",
+          "passed": false,
+          "threshold": "up_ratio>=65%, max连板>=3, 涨停>=5",
+          "current": {
+            "up_ratio": 0.2766,
+            "max_limit_up_streak": 1,
+            "limit_up_count": 1
+          },
+          "source": "auto"
+        },
+        {
+          "key": "no_negative_news",
+          "label": "竞价与基本面无压制",
+          "passed": true,
+          "threshold": "竞价门槛通过且无监管利空/集体减持/政策降温",
+          "current": {
+            "negative_news": false,
+            "auction_passed": true
+          },
+          "source": "manual"
+        }
+      ],
+      "passed_rule_labels": [
+        "趋势条件（站上MA20且MA20向上）",
+        "20日涨幅分级",
+        "竞价与基本面无压制"
+      ],
+      "rule_fail_reasons": [
+        "量能持续性",
+        "资金连续流入",
+        "板块赚钱效应"
+      ],
+      "stage": "decay",
+      "total_score": 50.0,
+      "is_main_line": false,
+      "main_line_tier": "top",
+      "env_score": 45,
+      "can_long": true,
+      "confirm_state": "pending",
+      "exit_state": "exit"
+    },
+    {
+      "trade_date": "2026-05-18",
+      "sector_code": "886033.TI",
+      "sector_name": "共封装光学(CPO)",
+      "pass_count": 3,
+      "total_rules": 6,
+      "all_passed": false,
+      "rules": [
+        {
+          "key": "trend_ma20_up",
+          "label": "趋势条件（站上MA20且MA20向上）",
+          "passed": true,
+          "threshold": "close > MA20 and MA20 > MA20_prev",
+          "current": {
+            "close": 6349.681,
+            "ma20": 5768.7092,
+            "ma20_prev": 5703.1062
+          },
+          "source": "auto"
+        },
+        {
+          "key": "pct_20d_tier",
+          "label": "20日涨幅分级",
+          "passed": true,
+          "threshold": ">=10%（>=18%为顶级主线）",
+          "current": {
+            "pct_20d": 26.0452,
+            "tier": "top"
+          },
+          "source": "auto"
+        },
+        {
+          "key": "volume_heat",
+          "label": "量能持续性",
+          "passed": false,
+          "threshold": "vol_ratio_5d>=1.6 and share8d>=4.5%",
+          "current": {
+            "vol_ratio_5d": 0.8621,
+            "share_8d_ok": false,
+            "share_history": [
+              18.1585,
+              17.6673,
+              17.1369
+            ],
+            "vol_ratio_debug": {
+              "vol_last": 78569569.0,
+              "vol_ma5": 91133755.4,
+              "vol_values_last6": [
+                96510596.0,
+                95268719.0,
+                92136556.0,
+                95058999.0,
+                94634934.0,
+                78569569.0
+              ]
+            },
+            "share_8d_debug": [
+              {
+                "trade_date": "2026-05-14",
+                "sector_money": 615224829.392,
+                "market_money": 3388086341.1759996,
+                "share_pct": 18.158475535734322
+              },
+              {
+                "trade_date": "2026-05-15",
+                "sector_money": 595430112.736,
+                "market_money": 3370232295.625,
+                "share_pct": 17.667331522190494
+              },
+              {
+                "trade_date": "2026-05-18",
+                "sector_money": 499894739.01,
+                "market_money": 2917073666.0620003,
+                "share_pct": 17.13685687221089
+              }
+            ]
+          },
+          "source": "auto"
+        },
+        {
+          "key": "capital_inflow",
+          "label": "资金连续流入",
+          "passed": false,
+          "threshold": "主力连续6日净流入 and 北向5日净流入>=2亿",
+          "current": {
+            "main_inflow_streak_days": 0,
+            "northbound_5d_yi": null,
+            "net_inflow_history_tail": [
+              -2071886.16,
+              -3363350.58,
+              -199641.04
+            ]
+          },
+          "source": "auto"
+        },
+        {
+          "key": "money_effect",
+          "label": "板块赚钱效应",
+          "passed": false,
+          "threshold": "up_ratio>=65%, max连板>=3, 涨停>=5",
+          "current": {
+            "up_ratio": 0.5851,
+            "max_limit_up_streak": 1,
+            "limit_up_count": 8
+          },
+          "source": "auto"
+        },
+        {
+          "key": "no_negative_news",
+          "label": "竞价与基本面无压制",
+          "passed": true,
+          "threshold": "竞价门槛通过且无监管利空/集体减持/政策降温",
+          "current": {
+            "negative_news": false,
+            "auction_passed": true
+          },
+          "source": "manual"
+        }
+      ],
+      "passed_rule_labels": [
+        "趋势条件（站上MA20且MA20向上）",
+        "20日涨幅分级",
+        "竞价与基本面无压制"
+      ],
+      "rule_fail_reasons": [
+        "量能持续性",
+        "资金连续流入",
+        "板块赚钱效应"
+      ],
+      "stage": "decay",
+      "total_score": 50.0,
+      "is_main_line": false,
+      "main_line_tier": "top",
+      "env_score": 67.6,
+      "can_long": true,
+      "confirm_state": "pending",
+      "exit_state": "exit"
+    },
+    {
+      "trade_date": "2026-05-19",
+      "sector_code": "886033.TI",
+      "sector_name": "共封装光学(CPO)",
+      "pass_count": 3,
+      "total_rules": 6,
+      "all_passed": false,
+      "rules": [
+        {
+          "key": "trend_ma20_up",
+          "label": "趋势条件（站上MA20且MA20向上）",
+          "passed": true,
+          "threshold": "close > MA20 and MA20 > MA20_prev",
+          "current": {
+            "close": 6440.617,
+            "ma20": 5833.5984,
+            "ma20_prev": 5768.7092
+          },
+          "source": "auto"
+        },
+        {
+          "key": "pct_20d_tier",
+          "label": "20日涨幅分级",
+          "passed": true,
+          "threshold": ">=10%（>=18%为顶级主线）",
+          "current": {
+            "pct_20d": 25.2348,
+            "tier": "top"
+          },
+          "source": "auto"
+        },
+        {
+          "key": "volume_heat",
+          "label": "量能持续性",
+          "passed": false,
+          "threshold": "vol_ratio_5d>=1.6 and share8d>=4.5%",
+          "current": {
+            "vol_ratio_5d": 0.9512,
+            "share_8d_ok": false,
+            "share_history": [
+              18.1585,
+              17.6673,
+              17.1369,
+              18.5999
+            ],
+            "vol_ratio_debug": {
+              "vol_last": 84674358.0,
+              "vol_ma5": 89014883.2,
+              "vol_values_last6": [
+                95268719.0,
+                92136556.0,
+                95058999.0,
+                94634934.0,
+                78569569.0,
+                84674358.0
+              ]
+            },
+            "share_8d_debug": [
+              {
+                "trade_date": "2026-05-14",
+                "sector_money": 615224829.392,
+                "market_money": 3388086341.1759996,
+                "share_pct": 18.158475535734322
+              },
+              {
+                "trade_date": "2026-05-15",
+                "sector_money": 595430112.736,
+                "market_money": 3370232295.625,
+                "share_pct": 17.667331522190494
+              },
+              {
+                "trade_date": "2026-05-18",
+                "sector_money": 499894739.01,
+                "market_money": 2917073666.0620003,
+                "share_pct": 17.13685687221089
+              },
+              {
+                "trade_date": "2026-05-19",
+                "sector_money": 541066489.46,
+                "market_money": 2908976620.151,
+                "share_pct": 18.599891305826795
+              }
+            ]
+          },
+          "source": "auto"
+        },
+        {
+          "key": "capital_inflow",
+          "label": "资金连续流入",
+          "passed": false,
+          "threshold": "主力连续6日净流入 and 北向5日净流入>=2亿",
+          "current": {
+            "main_inflow_streak_days": 0,
+            "northbound_5d_yi": null,
+            "net_inflow_history_tail": [
+              -2071886.16,
+              -3363350.58,
+              -199641.04,
+              -969450.07
+            ]
+          },
+          "source": "auto"
+        },
+        {
+          "key": "money_effect",
+          "label": "板块赚钱效应",
+          "passed": false,
+          "threshold": "up_ratio>=65%, max连板>=3, 涨停>=5",
+          "current": {
+            "up_ratio": 0.5957,
+            "max_limit_up_streak": 2,
+            "limit_up_count": 6
+          },
+          "source": "auto"
+        },
+        {
+          "key": "no_negative_news",
+          "label": "竞价与基本面无压制",
+          "passed": true,
+          "threshold": "竞价门槛通过且无监管利空/集体减持/政策降温",
+          "current": {
+            "negative_news": false,
+            "auction_passed": true
+          },
+          "source": "manual"
+        }
+      ],
+      "passed_rule_labels": [
+        "趋势条件（站上MA20且MA20向上）",
+        "20日涨幅分级",
+        "竞价与基本面无压制"
+      ],
+      "rule_fail_reasons": [
+        "量能持续性",
+        "资金连续流入",
+        "板块赚钱效应"
+      ],
+      "stage": "dormant",
+      "total_score": 50.0,
+      "is_main_line": false,
+      "main_line_tier": "top",
+      "env_score": 76.8,
+      "can_long": true,
+      "confirm_state": "pending",
+      "exit_state": "normal"
+    },
+    {
+      "trade_date": "2026-05-20",
+      "sector_code": "886033.TI",
+      "sector_name": "共封装光学(CPO)",
+      "pass_count": 3,
+      "total_rules": 6,
+      "all_passed": false,
+      "rules": [
+        {
+          "key": "trend_ma20_up",
+          "label": "趋势条件（站上MA20且MA20向上）",
+          "passed": true,
+          "threshold": "close > MA20 and MA20 > MA20_prev",
+          "current": {
+            "close": 6508.643,
+            "ma20": 5892.2253,
+            "ma20_prev": 5833.5984
+          },
+          "source": "auto"
+        },
+        {
+          "key": "pct_20d_tier",
+          "label": "20日涨幅分级",
+          "passed": true,
+          "threshold": ">=10%（>=18%为顶级主线）",
+          "current": {
+            "pct_20d": 21.9736,
+            "tier": "top"
+          },
+          "source": "auto"
+        },
+        {
+          "key": "volume_heat",
+          "label": "量能持续性",
+          "passed": false,
+          "threshold": "vol_ratio_5d>=1.6 and share8d>=4.5%",
+          "current": {
+            "vol_ratio_5d": 0.9912,
+            "share_8d_ok": false,
+            "share_history": [
+              18.1585,
+              17.6673,
+              17.1369,
+              18.5999,
+              18.3002
+            ],
+            "vol_ratio_debug": {
+              "vol_last": 87264526.0,
+              "vol_ma5": 88040477.2,
+              "vol_values_last6": [
+                92136556.0,
+                95058999.0,
+                94634934.0,
+                78569569.0,
+                84674358.0,
+                87264526.0
+              ]
+            },
+            "share_8d_debug": [
+              {
+                "trade_date": "2026-05-14",
+                "sector_money": 615224829.392,
+                "market_money": 3388086341.1759996,
+                "share_pct": 18.158475535734322
+              },
+              {
+                "trade_date": "2026-05-15",
+                "sector_money": 595430112.736,
+                "market_money": 3370232295.625,
+                "share_pct": 17.667331522190494
+              },
+              {
+                "trade_date": "2026-05-18",
+                "sector_money": 499894739.01,
+                "market_money": 2917073666.0620003,
+                "share_pct": 17.13685687221089
+              },
+              {
+                "trade_date": "2026-05-19",
+                "sector_money": 541066489.46,
+                "market_money": 2908976620.151,
+                "share_pct": 18.599891305826795
+              },
+              {
+                "trade_date": "2026-05-20",
+                "sector_money": 544697655.242,
+                "market_money": 2976458677.756,
+                "share_pct": 18.300192081035586
+              }
+            ]
+          },
+          "source": "auto"
+        },
+        {
+          "key": "capital_inflow",
+          "label": "资金连续流入",
+          "passed": false,
+          "threshold": "主力连续6日净流入 and 北向5日净流入>=2亿",
+          "current": {
+            "main_inflow_streak_days": 0,
+            "northbound_5d_yi": null,
+            "net_inflow_history_tail": [
+              -2071886.16,
+              -3363350.58,
+              -199641.04,
+              -969450.07,
+              -791548.55
+            ]
+          },
+          "source": "auto"
+        },
+        {
+          "key": "money_effect",
+          "label": "板块赚钱效应",
+          "passed": false,
+          "threshold": "up_ratio>=65%, max连板>=3, 涨停>=5",
+          "current": {
+            "up_ratio": 0.5319,
+            "max_limit_up_streak": 1,
+            "limit_up_count": 3
+          },
+          "source": "auto"
+        },
+        {
+          "key": "no_negative_news",
+          "label": "竞价与基本面无压制",
+          "passed": true,
+          "threshold": "竞价门槛通过且无监管利空/集体减持/政策降温",
+          "current": {
+            "negative_news": false,
+            "auction_passed": true
+          },
+          "source": "manual"
+        }
+      ],
+      "passed_rule_labels": [
+        "趋势条件（站上MA20且MA20向上）",
+        "20日涨幅分级",
+        "竞价与基本面无压制"
+      ],
+      "rule_fail_reasons": [
+        "量能持续性",
+        "资金连续流入",
+        "板块赚钱效应"
+      ],
+      "stage": "decay",
+      "total_score": 50.0,
+      "is_main_line": false,
+      "main_line_tier": "top",
+      "env_score": 45,
+      "can_long": true,
+      "confirm_state": "pending",
+      "exit_state": "exit"
+    },
+    {
+      "trade_date": "2026-05-21",
+      "sector_code": "886033.TI",
+      "sector_name": "共封装光学(CPO)",
+      "pass_count": 3,
+      "total_rules": 6,
+      "all_passed": false,
+      "rules": [
+        {
+          "key": "trend_ma20_up",
+          "label": "趋势条件（站上MA20且MA20向上）",
+          "passed": true,
+          "threshold": "close > MA20 and MA20 > MA20_prev",
+          "current": {
+            "close": 6208.381,
+            "ma20": 5933.1197,
+            "ma20_prev": 5892.2253
+          },
+          "source": "auto"
+        },
+        {
+          "key": "pct_20d_tier",
+          "label": "20日涨幅分级",
+          "passed": true,
+          "threshold": ">=10%（>=18%为顶级主线）",
+          "current": {
+            "pct_20d": 15.1728,
+            "tier": "secondary"
+          },
+          "source": "auto"
+        },
+        {
+          "key": "volume_heat",
+          "label": "量能持续性",
+          "passed": false,
+          "threshold": "vol_ratio_5d>=1.6 and share8d>=4.5%",
+          "current": {
+            "vol_ratio_5d": 1.1621,
+            "share_8d_ok": false,
+            "share_history": [
+              18.1585,
+              17.6673,
+              17.1369,
+              18.5999,
+              18.3002,
+              17.2482
+            ],
+            "vol_ratio_debug": {
+              "vol_last": 104505169.0,
+              "vol_ma5": 89929711.2,
+              "vol_values_last6": [
+                95058999.0,
+                94634934.0,
+                78569569.0,
+                84674358.0,
+                87264526.0,
+                104505169.0
+              ]
+            },
+            "share_8d_debug": [
+              {
+                "trade_date": "2026-05-14",
+                "sector_money": 615224829.392,
+                "market_money": 3388086341.1759996,
+                "share_pct": 18.158475535734322
+              },
+              {
+                "trade_date": "2026-05-15",
+                "sector_money": 595430112.736,
+                "market_money": 3370232295.625,
+                "share_pct": 17.667331522190494
+              },
+              {
+                "trade_date": "2026-05-18",
+                "sector_money": 499894739.01,
+                "market_money": 2917073666.0620003,
+                "share_pct": 17.13685687221089
+              },
+              {
+                "trade_date": "2026-05-19",
+                "sector_money": 541066489.46,
+                "market_money": 2908976620.151,
+                "share_pct": 18.599891305826795
+              },
+              {
+                "trade_date": "2026-05-20",
+                "sector_money": 544697655.242,
+                "market_money": 2976458677.756,
+                "share_pct": 18.300192081035586
+              },
+              {
+                "trade_date": "2026-05-21",
+                "sector_money": 604941232.43,
+                "market_money": 3507279541.5270004,
+                "share_pct": 17.248161296165758
+              }
+            ]
+          },
+          "source": "auto"
+        },
+        {
+          "key": "capital_inflow",
+          "label": "资金连续流入",
+          "passed": false,
+          "threshold": "主力连续6日净流入 and 北向5日净流入>=2亿",
+          "current": {
+            "main_inflow_streak_days": 0,
+            "northbound_5d_yi": null,
+            "net_inflow_history_tail": [
+              -2071886.16,
+              -3363350.58,
+              -199641.04,
+              -969450.07,
+              -791548.55,
+              -4418841.85
+            ]
+          },
+          "source": "auto"
+        },
+        {
+          "key": "money_effect",
+          "label": "板块赚钱效应",
+          "passed": false,
+          "threshold": "up_ratio>=65%, max连板>=3, 涨停>=5",
+          "current": {
+            "up_ratio": 0.1223,
+            "max_limit_up_streak": 1,
+            "limit_up_count": 1
+          },
+          "source": "auto"
+        },
+        {
+          "key": "no_negative_news",
+          "label": "竞价与基本面无压制",
+          "passed": true,
+          "threshold": "竞价门槛通过且无监管利空/集体减持/政策降温",
+          "current": {
+            "negative_news": false,
+            "auction_passed": true
+          },
+          "source": "manual"
+        }
+      ],
+      "passed_rule_labels": [
+        "趋势条件（站上MA20且MA20向上）",
+        "20日涨幅分级",
+        "竞价与基本面无压制"
+      ],
+      "rule_fail_reasons": [
+        "量能持续性",
+        "资金连续流入",
+        "板块赚钱效应"
+      ],
+      "stage": "decay",
+      "total_score": 50.0,
+      "is_main_line": false,
+      "main_line_tier": "secondary",
+      "env_score": 45,
+      "can_long": true,
+      "confirm_state": "pending",
+      "exit_state": "exit"
+    },
+    {
+      "trade_date": "2026-05-22",
+      "sector_code": "886033.TI",
+      "sector_name": "共封装光学(CPO)",
+      "pass_count": 3,
+      "total_rules": 6,
+      "all_passed": false,
+      "rules": [
+        {
+          "key": "trend_ma20_up",
+          "label": "趋势条件（站上MA20且MA20向上）",
+          "passed": true,
+          "threshold": "close > MA20 and MA20 > MA20_prev",
+          "current": {
+            "close": 6536.836,
+            "ma20": 5988.6887,
+            "ma20_prev": 5933.1197
+          },
+          "source": "auto"
+        },
+        {
+          "key": "pct_20d_tier",
+          "label": "20日涨幅分级",
+          "passed": true,
+          "threshold": ">=10%（>=18%为顶级主线）",
+          "current": {
+            "pct_20d": 20.4846,
+            "tier": "top"
+          },
+          "source": "auto"
+        },
+        {
+          "key": "volume_heat",
+          "label": "量能持续性",
+          "passed": false,
+          "threshold": "vol_ratio_5d>=1.6 and share8d>=4.5%",
+          "current": {
+            "vol_ratio_5d": 0.9903,
+            "share_8d_ok": false,
+            "share_history": [
+              18.1585,
+              17.6673,
+              17.1369,
+              18.5999,
+              18.3002,
+              17.2482,
+              18.7128
+            ],
+            "vol_ratio_debug": {
+              "vol_last": 87675024.0,
+              "vol_ma5": 88537729.2,
+              "vol_values_last6": [
+                94634934.0,
+                78569569.0,
+                84674358.0,
+                87264526.0,
+                104505169.0,
+                87675024.0
+              ]
+            },
+            "share_8d_debug": [
+              {
+                "trade_date": "2026-05-14",
+                "sector_money": 615224829.392,
+                "market_money": 3388086341.1759996,
+                "share_pct": 18.158475535734322
+              },
+              {
+                "trade_date": "2026-05-15",
+                "sector_money": 595430112.736,
+                "market_money": 3370232295.625,
+                "share_pct": 17.667331522190494
+              },
+              {
+                "trade_date": "2026-05-18",
+                "sector_money": 499894739.01,
+                "market_money": 2917073666.0620003,
+                "share_pct": 17.13685687221089
+              },
+              {
+                "trade_date": "2026-05-19",
+                "sector_money": 541066489.46,
+                "market_money": 2908976620.151,
+                "share_pct": 18.599891305826795
+              },
+              {
+                "trade_date": "2026-05-20",
+                "sector_money": 544697655.242,
+                "market_money": 2976458677.756,
+                "share_pct": 18.300192081035586
+              },
+              {
+                "trade_date": "2026-05-21",
+                "sector_money": 604941232.43,
+                "market_money": 3507279541.5270004,
+                "share_pct": 17.248161296165758
+              },
+              {
+                "trade_date": "2026-05-22",
+                "sector_money": 547284788.443,
+                "market_money": 2924659105.588,
+                "share_pct": 18.71277193972215
+              }
+            ]
+          },
+          "source": "auto"
+        },
+        {
+          "key": "capital_inflow",
+          "label": "资金连续流入",
+          "passed": false,
+          "threshold": "主力连续6日净流入 and 北向5日净流入>=2亿",
+          "current": {
+            "main_inflow_streak_days": 1,
+            "northbound_5d_yi": null,
+            "net_inflow_history_tail": [
+              -2071886.16,
+              -3363350.58,
+              -199641.04,
+              -969450.07,
+              -791548.55,
+              -4418841.85,
+              2169778.49
+            ]
+          },
+          "source": "auto"
+        },
+        {
+          "key": "money_effect",
+          "label": "板块赚钱效应",
+          "passed": false,
+          "threshold": "up_ratio>=65%, max连板>=3, 涨停>=5",
+          "current": {
+            "up_ratio": 0.9628,
+            "max_limit_up_streak": 2,
+            "limit_up_count": 18
+          },
+          "source": "auto"
+        },
+        {
+          "key": "no_negative_news",
+          "label": "竞价与基本面无压制",
+          "passed": true,
+          "threshold": "竞价门槛通过且无监管利空/集体减持/政策降温",
+          "current": {
+            "negative_news": false,
+            "auction_passed": true
+          },
+          "source": "manual"
+        }
+      ],
+      "passed_rule_labels": [
+        "趋势条件（站上MA20且MA20向上）",
+        "20日涨幅分级",
+        "竞价与基本面无压制"
+      ],
+      "rule_fail_reasons": [
+        "量能持续性",
+        "资金连续流入",
+        "板块赚钱效应"
+      ],
+      "stage": "dormant",
+      "total_score": 50.0,
+      "is_main_line": false,
+      "main_line_tier": "top",
+      "env_score": 80.4,
+      "can_long": true,
+      "confirm_state": "pending",
+      "exit_state": "normal"
+    },
+    {
+      "trade_date": "2026-05-25",
+      "sector_code": "886033.TI",
+      "sector_name": "共封装光学(CPO)",
+      "pass_count": 3,
+      "total_rules": 6,
+      "all_passed": false,
+      "rules": [
+        {
+          "key": "trend_ma20_up",
+          "label": "趋势条件（站上MA20且MA20向上）",
+          "passed": true,
+          "threshold": "close > MA20 and MA20 > MA20_prev",
+          "current": {
+            "close": 6713.629,
+            "ma20": 6042.1915,
+            "ma20_prev": 5988.6887
+          },
+          "source": "auto"
+        },
+        {
+          "key": "pct_20d_tier",
+          "label": "20日涨幅分级",
+          "passed": true,
+          "threshold": ">=10%（>=18%为顶级主线）",
+          "current": {
+            "pct_20d": 18.9606,
+            "tier": "top"
+          },
+          "source": "auto"
+        },
+        {
+          "key": "volume_heat",
+          "label": "量能持续性",
+          "passed": false,
+          "threshold": "vol_ratio_5d>=1.6 and share8d>=4.5%",
+          "current": {
+            "vol_ratio_5d": 1.0121,
+            "share_8d_ok": true,
+            "share_history": [
+              18.1585,
+              17.6673,
+              17.1369,
+              18.5999,
+              18.3002,
+              17.2482,
+              18.7128,
+              19.2814
+            ],
+            "vol_ratio_debug": {
+              "vol_last": 92406565.0,
+              "vol_ma5": 91305128.4,
+              "vol_values_last6": [
+                78569569.0,
+                84674358.0,
+                87264526.0,
+                104505169.0,
+                87675024.0,
+                92406565.0
+              ]
+            },
+            "share_8d_debug": [
+              {
+                "trade_date": "2026-05-14",
+                "sector_money": 615224829.392,
+                "market_money": 3388086341.1759996,
+                "share_pct": 18.158475535734322
+              },
+              {
+                "trade_date": "2026-05-15",
+                "sector_money": 595430112.736,
+                "market_money": 3370232295.625,
+                "share_pct": 17.667331522190494
+              },
+              {
+                "trade_date": "2026-05-18",
+                "sector_money": 499894739.01,
+                "market_money": 2917073666.0620003,
+                "share_pct": 17.13685687221089
+              },
+              {
+                "trade_date": "2026-05-19",
+                "sector_money": 541066489.46,
+                "market_money": 2908976620.151,
+                "share_pct": 18.599891305826795
+              },
+              {
+                "trade_date": "2026-05-20",
+                "sector_money": 544697655.242,
+                "market_money": 2976458677.756,
+                "share_pct": 18.300192081035586
+              },
+              {
+                "trade_date": "2026-05-21",
+                "sector_money": 604941232.43,
+                "market_money": 3507279541.5270004,
+                "share_pct": 17.248161296165758
+              },
+              {
+                "trade_date": "2026-05-22",
+                "sector_money": 547284788.443,
+                "market_money": 2924659105.588,
+                "share_pct": 18.71277193972215
+              },
+              {
+                "trade_date": "2026-05-25",
+                "sector_money": 622201344.663,
+                "market_money": 3226952453.297,
+                "share_pct": 19.281391767247534
+              }
+            ]
+          },
+          "source": "auto"
+        },
+        {
+          "key": "capital_inflow",
+          "label": "资金连续流入",
+          "passed": false,
+          "threshold": "主力连续6日净流入 and 北向5日净流入>=2亿",
+          "current": {
+            "main_inflow_streak_days": 2,
+            "northbound_5d_yi": null,
+            "net_inflow_history_tail": [
+              -2071886.16,
+              -3363350.58,
+              -199641.04,
+              -969450.07,
+              -791548.55,
+              -4418841.85,
+              2169778.49,
+              1368047.41
+            ]
+          },
+          "source": "auto"
+        },
+        {
+          "key": "money_effect",
+          "label": "板块赚钱效应",
+          "passed": false,
+          "threshold": "up_ratio>=65%, max连板>=3, 涨停>=5",
+          "current": {
+            "up_ratio": 0.6809,
+            "max_limit_up_streak": 2,
+            "limit_up_count": 13
+          },
+          "source": "auto"
+        },
+        {
+          "key": "no_negative_news",
+          "label": "竞价与基本面无压制",
+          "passed": true,
+          "threshold": "竞价门槛通过且无监管利空/集体减持/政策降温",
+          "current": {
+            "negative_news": false,
+            "auction_passed": true
+          },
+          "source": "manual"
+        }
+      ],
+      "passed_rule_labels": [
+        "趋势条件（站上MA20且MA20向上）",
+        "20日涨幅分级",
+        "竞价与基本面无压制"
+      ],
+      "rule_fail_reasons": [
+        "量能持续性",
+        "资金连续流入",
+        "板块赚钱效应"
+      ],
+      "stage": "dormant",
+      "total_score": 50.0,
+      "is_main_line": false,
+      "main_line_tier": "top",
+      "env_score": 69.5,
+      "can_long": true,
+      "confirm_state": "pending",
+      "exit_state": "normal"
+    },
+    {
+      "trade_date": "2026-05-26",
+      "sector_code": "886033.TI",
+      "sector_name": "共封装光学(CPO)",
+      "pass_count": 3,
+      "total_rules": 6,
+      "all_passed": false,
+      "rules": [
+        {
+          "key": "trend_ma20_up",
+          "label": "趋势条件（站上MA20且MA20向上）",
+          "passed": true,
+          "threshold": "close > MA20 and MA20 > MA20_prev",
+          "current": {
+            "close": 6588.184,
+            "ma20": 6096.8387,
+            "ma20_prev": 6042.1915
+          },
+          "source": "auto"
+        },
+        {
+          "key": "pct_20d_tier",
+          "label": "20日涨幅分级",
+          "passed": true,
+          "threshold": ">=10%（>=18%为顶级主线）",
+          "current": {
+            "pct_20d": 19.8889,
+            "tier": "top"
+          },
+          "source": "auto"
+        },
+        {
+          "key": "volume_heat",
+          "label": "量能持续性",
+          "passed": false,
+          "threshold": "vol_ratio_5d>=1.6 and share8d>=4.5%",
+          "current": {
+            "vol_ratio_5d": 1.0603,
+            "share_8d_ok": true,
+            "share_history": [
+              17.6673,
+              17.1369,
+              18.5999,
+              18.3002,
+              17.2482,
+              18.7128,
+              19.2814,
+              19.5233
+            ],
+            "vol_ratio_debug": {
+              "vol_last": 100074327.0,
+              "vol_ma5": 94385122.2,
+              "vol_values_last6": [
+                84674358.0,
+                87264526.0,
+                104505169.0,
+                87675024.0,
+                92406565.0,
+                100074327.0
+              ]
+            },
+            "share_8d_debug": [
+              {
+                "trade_date": "2026-05-15",
+                "sector_money": 595430112.736,
+                "market_money": 3370232295.625,
+                "share_pct": 17.667331522190494
+              },
+              {
+                "trade_date": "2026-05-18",
+                "sector_money": 499894739.01,
+                "market_money": 2917073666.0620003,
+                "share_pct": 17.13685687221089
+              },
+              {
+                "trade_date": "2026-05-19",
+                "sector_money": 541066489.46,
+                "market_money": 2908976620.151,
+                "share_pct": 18.599891305826795
+              },
+              {
+                "trade_date": "2026-05-20",
+                "sector_money": 544697655.242,
+                "market_money": 2976458677.756,
+                "share_pct": 18.300192081035586
+              },
+              {
+                "trade_date": "2026-05-21",
+                "sector_money": 604941232.43,
+                "market_money": 3507279541.5270004,
+                "share_pct": 17.248161296165758
+              },
+              {
+                "trade_date": "2026-05-22",
+                "sector_money": 547284788.443,
+                "market_money": 2924659105.588,
+                "share_pct": 18.71277193972215
+              },
+              {
+                "trade_date": "2026-05-25",
+                "sector_money": 622201344.663,
+                "market_money": 3226952453.297,
+                "share_pct": 19.281391767247534
+              },
+              {
+                "trade_date": "2026-05-26",
+                "sector_money": 637311155.615,
+                "market_money": 3264359080.086,
+                "share_pct": 19.523316521851815
+              }
+            ]
+          },
+          "source": "auto"
+        },
+        {
+          "key": "capital_inflow",
+          "label": "资金连续流入",
+          "passed": false,
+          "threshold": "主力连续6日净流入 and 北向5日净流入>=2亿",
+          "current": {
+            "main_inflow_streak_days": 0,
+            "northbound_5d_yi": null,
+            "net_inflow_history_tail": [
+              -2071886.16,
+              -3363350.58,
+              -199641.04,
+              -969450.07,
+              -791548.55,
+              -4418841.85,
+              2169778.49,
+              1368047.41,
+              -2945037.51
+            ]
+          },
+          "source": "auto"
+        },
+        {
+          "key": "money_effect",
+          "label": "板块赚钱效应",
+          "passed": false,
+          "threshold": "up_ratio>=65%, max连板>=3, 涨停>=5",
+          "current": {
+            "up_ratio": 0.2766,
+            "max_limit_up_streak": 2,
+            "limit_up_count": 7
+          },
+          "source": "auto"
+        },
+        {
+          "key": "no_negative_news",
+          "label": "竞价与基本面无压制",
+          "passed": true,
+          "threshold": "竞价门槛通过且无监管利空/集体减持/政策降温",
+          "current": {
+            "negative_news": false,
+            "auction_passed": true
+          },
+          "source": "manual"
+        }
+      ],
+      "passed_rule_labels": [
+        "趋势条件（站上MA20且MA20向上）",
+        "20日涨幅分级",
+        "竞价与基本面无压制"
+      ],
+      "rule_fail_reasons": [
+        "量能持续性",
+        "资金连续流入",
+        "板块赚钱效应"
+      ],
+      "stage": "dormant",
+      "total_score": 50.0,
+      "is_main_line": false,
+      "main_line_tier": "top",
+      "env_score": 45,
+      "can_long": true,
+      "confirm_state": "pending",
+      "exit_state": "normal"
+    },
+    {
+      "trade_date": "2026-05-27",
+      "sector_code": "886033.TI",
+      "sector_name": "共封装光学(CPO)",
+      "pass_count": 3,
+      "total_rules": 6,
+      "all_passed": false,
+      "rules": [
+        {
+          "key": "trend_ma20_up",
+          "label": "趋势条件（站上MA20且MA20向上）",
+          "passed": true,
+          "threshold": "close > MA20 and MA20 > MA20_prev",
+          "current": {
+            "close": 6487.146,
+            "ma20": 6150.3864,
+            "ma20_prev": 6096.8387
+          },
+          "source": "auto"
+        },
+        {
+          "key": "pct_20d_tier",
+          "label": "20日涨幅分级",
+          "passed": true,
+          "threshold": ">=10%（>=18%为顶级主线）",
+          "current": {
+            "pct_20d": 19.7732,
+            "tier": "top"
+          },
+          "source": "auto"
+        },
+        {
+          "key": "volume_heat",
+          "label": "量能持续性",
+          "passed": false,
+          "threshold": "vol_ratio_5d>=1.6 and share8d>=4.5%",
+          "current": {
+            "vol_ratio_5d": 1.0631,
+            "share_8d_ok": true,
+            "share_history": [
+              17.1369,
+              18.5999,
+              18.3002,
+              17.2482,
+              18.7128,
+              19.2814,
+              19.5233,
+              20.1592
+            ],
+            "vol_ratio_debug": {
+              "vol_last": 103870162.0,
+              "vol_ma5": 97706249.4,
+              "vol_values_last6": [
+                87264526.0,
+                104505169.0,
+                87675024.0,
+                92406565.0,
+                100074327.0,
+                103870162.0
+              ]
+            },
+            "share_8d_debug": [
+              {
+                "trade_date": "2026-05-18",
+                "sector_money": 499894739.01,
+                "market_money": 2917073666.0620003,
+                "share_pct": 17.13685687221089
+              },
+              {
+                "trade_date": "2026-05-19",
+                "sector_money": 541066489.46,
+                "market_money": 2908976620.151,
+                "share_pct": 18.599891305826795
+              },
+              {
+                "trade_date": "2026-05-20",
+                "sector_money": 544697655.242,
+                "market_money": 2976458677.756,
+                "share_pct": 18.300192081035586
+              },
+              {
+                "trade_date": "2026-05-21",
+                "sector_money": 604941232.43,
+                "market_money": 3507279541.5270004,
+                "share_pct": 17.248161296165758
+              },
+              {
+                "trade_date": "2026-05-22",
+                "sector_money": 547284788.443,
+                "market_money": 2924659105.588,
+                "share_pct": 18.71277193972215
+              },
+              {
+                "trade_date": "2026-05-25",
+                "sector_money": 622201344.663,
+                "market_money": 3226952453.297,
+                "share_pct": 19.281391767247534
+              },
+              {
+                "trade_date": "2026-05-26",
+                "sector_money": 637311155.615,
+                "market_money": 3264359080.086,
+                "share_pct": 19.523316521851815
+              },
+              {
+                "trade_date": "2026-05-27",
+                "sector_money": 657170003.014,
+                "market_money": 3259904342.636,
+                "share_pct": 20.159180575298848
+              }
+            ]
+          },
+          "source": "auto"
+        },
+        {
+          "key": "capital_inflow",
+          "label": "资金连续流入",
+          "passed": false,
+          "threshold": "主力连续6日净流入 and 北向5日净流入>=2亿",
+          "current": {
+            "main_inflow_streak_days": 0,
+            "northbound_5d_yi": null,
+            "net_inflow_history_tail": [
+              -2071886.16,
+              -3363350.58,
+              -199641.04,
+              -969450.07,
+              -791548.55,
+              -4418841.85,
+              2169778.49,
+              1368047.41,
+              -2945037.51,
+              -2190180.41
+            ]
+          },
+          "source": "auto"
+        },
+        {
+          "key": "money_effect",
+          "label": "板块赚钱效应",
+          "passed": false,
+          "threshold": "up_ratio>=65%, max连板>=3, 涨停>=5",
+          "current": {
+            "up_ratio": 0.2926,
+            "max_limit_up_streak": 2,
+            "limit_up_count": 2
+          },
+          "source": "auto"
+        },
+        {
+          "key": "no_negative_news",
+          "label": "竞价与基本面无压制",
+          "passed": true,
+          "threshold": "竞价门槛通过且无监管利空/集体减持/政策降温",
+          "current": {
+            "negative_news": false,
+            "auction_passed": true
+          },
+          "source": "manual"
+        }
+      ],
+      "passed_rule_labels": [
+        "趋势条件（站上MA20且MA20向上）",
+        "20日涨幅分级",
+        "竞价与基本面无压制"
+      ],
+      "rule_fail_reasons": [
+        "量能持续性",
+        "资金连续流入",
+        "板块赚钱效应"
+      ],
+      "stage": "dormant",
+      "total_score": 50.0,
+      "is_main_line": false,
+      "main_line_tier": "top",
+      "env_score": 45,
+      "can_long": true,
+      "confirm_state": "pending",
+      "exit_state": "normal"
+    },
+    {
+      "trade_date": "2026-05-28",
+      "sector_code": "886033.TI",
+      "sector_name": "共封装光学(CPO)",
+      "pass_count": 4,
+      "total_rules": 6,
+      "all_passed": false,
+      "rules": [
+        {
+          "key": "trend_ma20_up",
+          "label": "趋势条件（站上MA20且MA20向上）",
+          "passed": true,
+          "threshold": "close > MA20 and MA20 > MA20_prev",
+          "current": {
+            "close": 6688.263,
+            "ma20": 6208.9351,
+            "ma20_prev": 6150.3864
+          },
+          "source": "auto"
+        },
+        {
+          "key": "pct_20d_tier",
+          "label": "20日涨幅分级",
+          "passed": true,
+          "threshold": ">=10%（>=18%为顶级主线）",
+          "current": {
+            "pct_20d": 21.2237,
+            "tier": "top"
+          },
+          "source": "auto"
+        },
+        {
+          "key": "volume_heat",
+          "label": "量能持续性",
+          "passed": false,
+          "threshold": "vol_ratio_5d>=1.6 and share8d>=4.5%",
+          "current": {
+            "vol_ratio_5d": 0.9899,
+            "share_8d_ok": true,
+            "share_history": [
+              18.5999,
+              18.3002,
+              17.2482,
+              18.7128,
+              19.2814,
+              19.5233,
+              20.1592,
+              20.5843
+            ],
+            "vol_ratio_debug": {
+              "vol_last": 94801035.0,
+              "vol_ma5": 95765422.6,
+              "vol_values_last6": [
+                104505169.0,
+                87675024.0,
+                92406565.0,
+                100074327.0,
+                103870162.0,
+                94801035.0
+              ]
+            },
+            "share_8d_debug": [
+              {
+                "trade_date": "2026-05-19",
+                "sector_money": 541066489.46,
+                "market_money": 2908976620.151,
+                "share_pct": 18.599891305826795
+              },
+              {
+                "trade_date": "2026-05-20",
+                "sector_money": 544697655.242,
+                "market_money": 2976458677.756,
+                "share_pct": 18.300192081035586
+              },
+              {
+                "trade_date": "2026-05-21",
+                "sector_money": 604941232.43,
+                "market_money": 3507279541.5270004,
+                "share_pct": 17.248161296165758
+              },
+              {
+                "trade_date": "2026-05-22",
+                "sector_money": 547284788.443,
+                "market_money": 2924659105.588,
+                "share_pct": 18.71277193972215
+              },
+              {
+                "trade_date": "2026-05-25",
+                "sector_money": 622201344.663,
+                "market_money": 3226952453.297,
+                "share_pct": 19.281391767247534
+              },
+              {
+                "trade_date": "2026-05-26",
+                "sector_money": 637311155.615,
+                "market_money": 3264359080.086,
+                "share_pct": 19.523316521851815
+              },
+              {
+                "trade_date": "2026-05-27",
+                "sector_money": 657170003.014,
+                "market_money": 3259904342.636,
+                "share_pct": 20.159180575298848
+              },
+              {
+                "trade_date": "2026-05-28",
+                "sector_money": 614919294.253,
+                "market_money": 2987326312.007,
+                "share_pct": 20.58426934417733
+              }
+            ]
+          },
+          "source": "auto"
+        },
+        {
+          "key": "capital_inflow",
+          "label": "资金连续流入",
+          "passed": false,
+          "threshold": "主力连续6日净流入 and 北向5日净流入>=2亿",
+          "current": {
+            "main_inflow_streak_days": 1,
+            "northbound_5d_yi": null,
+            "net_inflow_history_tail": [
+              -2071886.16,
+              -3363350.58,
+              -199641.04,
+              -969450.07,
+              -791548.55,
+              -4418841.85,
+              2169778.49,
+              1368047.41,
+              -2945037.51,
+              -2190180.41,
+              1285887.96
+            ]
+          },
+          "source": "auto"
+        },
+        {
+          "key": "money_effect",
+          "label": "板块赚钱效应",
+          "passed": true,
+          "threshold": "up_ratio>=65%, max连板>=3, 涨停>=5",
+          "current": {
+            "up_ratio": 0.7819,
+            "max_limit_up_streak": 3,
+            "limit_up_count": 10
+          },
+          "source": "auto"
+        },
+        {
+          "key": "no_negative_news",
+          "label": "竞价与基本面无压制",
+          "passed": true,
+          "threshold": "竞价门槛通过且无监管利空/集体减持/政策降温",
+          "current": {
+            "negative_news": false,
+            "auction_passed": true
+          },
+          "source": "manual"
+        }
+      ],
+      "passed_rule_labels": [
+        "趋势条件（站上MA20且MA20向上）",
+        "20日涨幅分级",
+        "板块赚钱效应",
+        "竞价与基本面无压制"
+      ],
+      "rule_fail_reasons": [
+        "量能持续性",
+        "资金连续流入"
+      ],
+      "stage": "sprout",
+      "total_score": 66.67,
+      "is_main_line": false,
+      "main_line_tier": "top",
+      "env_score": 73.3,
+      "can_long": true,
+      "confirm_state": "pending",
+      "exit_state": "normal"
+    }
+  ]
+}

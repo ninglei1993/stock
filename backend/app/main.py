@@ -6,7 +6,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
 from app.config import settings
-from app.database import init_db
 from app.jobs.scheduler import start_scheduler
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
@@ -25,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_db()
     from app.adapters.factory import reset_adapter
     from app.services.concept_cache import clear_concept_cache, warm_cache_background
 
@@ -43,7 +41,7 @@ async def lifespan(app: FastAPI):
     from app.services.latest_scan_store import LatestScanStore
 
     LatestScanStore.hydrate_dashboard_snapshot()
-    logger.info("Database initialized")
+    logger.info("Application initialized")
     start_scheduler()
     yield
 

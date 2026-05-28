@@ -1,7 +1,5 @@
 from dataclasses import dataclass
 
-from app.models.tables import MarketEnvDaily
-
 
 @dataclass
 class EnvResult:
@@ -55,7 +53,7 @@ class RiskModule:
             return "observe"
         return hint
 
-    def env_from_model(self, row: MarketEnvDaily) -> EnvResult:
+    def env_from_model(self, row) -> EnvResult:
         return EnvResult(
             env_score=row.env_score,
             limit_up_count=row.limit_up_count,

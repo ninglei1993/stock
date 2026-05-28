@@ -4,7 +4,7 @@ from app.models.tables import Alert, MarketEnvDaily
 from app.schemas.common import AlertOut, MarketEnvOut
 
 
-def test_market_env_from_orm():
+def test_market_env_from_dataclass():
     row = MarketEnvDaily(
         trade_date=date(2026, 5, 17),
         env_score=65.0,
@@ -19,7 +19,7 @@ def test_market_env_from_orm():
     assert out.conclusion == "caution"
 
 
-def test_alert_from_orm():
+def test_alert_from_dataclass():
     row = Alert(
         id=1,
         trade_date=date(2026, 5, 17),

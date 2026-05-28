@@ -77,6 +77,7 @@ class LoadedLatestScan:
     sector_dailies: dict[str, dict] = field(default_factory=dict)
     sector_flows: dict[str, dict] = field(default_factory=dict)
     stocks_by_sector: dict[str, list[dict]] = field(default_factory=dict)
+    near_miss: list[dict[str, Any]] = field(default_factory=list)
 
 
 def scan_latest_path() -> Path:
@@ -234,6 +235,7 @@ class LatestScanStore:
         sector_dailies: dict[str, Any] | None = None,
         sector_flows: dict[str, Any] | None = None,
         stocks_by_sector: dict[str, list[Any]] | None = None,
+        near_miss: list[dict[str, Any]] | None = None,
     ) -> Path:
         # 防止 epoch 日期写入快照
         if trade_date < _EPOCH_CUTOFF:
@@ -263,6 +265,7 @@ class LatestScanStore:
             "sector_dailies": {code: _sector_daily_to_dict(d) for code, d in (sector_dailies or {}).items()},
             "sector_flows": {code: _sector_flow_to_dict(f) for code, f in (sector_flows or {}).items()},
             "stocks_by_sector": {code: [_stock_to_dict(s) for s in rows] for code, rows in (stocks_by_sector or {}).items()},
+            "near_miss": near_miss or [],
             "saved_at": datetime.now(timezone.utc).isoformat(),
         }
         if market_cache_stats:
@@ -379,6 +382,9 @@ class LatestScanStore:
             if isinstance(rows, list):
                 stocks_by_sector[code] = rows
 
+        near_miss_raw = raw.get("near_miss") or []
+        near_miss = [item for item in near_miss_raw if isinstance(item, dict)]
+
         return LoadedLatestScan(
             trade_date=td,
             scan_start_date=_parse_date(raw.get("scan_start_date")),
@@ -391,6 +397,7 @@ class LatestScanStore:
             sector_dailies=sector_dailies,
             sector_flows=sector_flows,
             stocks_by_sector=stocks_by_sector,
+            near_miss=near_miss,
         )
 
     @staticmethod

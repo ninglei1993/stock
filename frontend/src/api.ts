@@ -321,6 +321,40 @@ export interface BacktestTrade {
   exit_scores?: ScoreSnapshot | null;
 }
 
+export interface NearMissRule {
+  key: string;
+  label: string;
+  passed: boolean;
+  threshold?: string;
+  current?: unknown;
+  source?: string;
+}
+
+export interface NearMissItem {
+  trade_date: string;
+  sector_code: string;
+  sector_name: string;
+  pass_count: number;
+  total_rules: number;
+  all_passed: boolean;
+  rules: NearMissRule[];
+  passed_rule_labels: string[];
+  rule_fail_reasons: string[];
+  stage: string;
+  total_score: number;
+  is_main_line: boolean;
+  main_line_tier: string;
+  env_score?: number | null;
+  can_long?: boolean | null;
+  confirm_state?: string;
+  exit_state?: string;
+}
+
+export interface NearMissList {
+  trade_date: string | null;
+  items: NearMissItem[];
+}
+
 export const api = {
   health: () => fetchJson<{ status: string; adapter?: string; universe_total?: number }>("/health"),
   systemStatus: () => fetchJson<SystemStatus>("/system/status"),
@@ -420,6 +454,9 @@ export const api = {
   getBacktest: (id: number) => fetchJson<BacktestRun>(`/backtest/runs/${id}`),
   backtestReport: (id: number) => fetchJson<BacktestReport>(`/backtest/runs/${id}/report`),
   backtestTrades: (id: number) => fetchJson<BacktestTrade[]>(`/backtest/runs/${id}/trades`),
+  aStrategyBacktestNearMiss: (runId: number) =>
+    fetchJson<NearMissList>(`/a-strategy-backtest/runs/${runId}/near-miss`),
+
   aStrategyMainLines: (tradeDate?: string, includeRejected = true) => {
     const params = new URLSearchParams();
     if (tradeDate) params.set("trade_date", tradeDate);

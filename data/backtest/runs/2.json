@@ -1,0 +1,151 @@
+{
+  "run": {
+    "id": 2,
+    "status": "done",
+    "strategy_id": "a_strategy_strict",
+    "start_date": "2026-05-01",
+    "end_date": "2026-05-27",
+    "params": {
+      "sector_codes": [
+        "886033.TI"
+      ],
+      "initial_capital": 1000000
+    },
+    "progress": 16,
+    "total_days": 16,
+    "error_message": null,
+    "created_at": "2026-05-28T10:23:52.361875",
+    "finished_at": "2026-05-28T10:24:48.057311"
+  },
+  "trades": [],
+  "metrics": {
+    "run_id": 2,
+    "total_return": 0.0,
+    "annual_return": 0.0,
+    "max_drawdown": 0.0,
+    "sharpe": 0.0,
+    "win_rate": 0,
+    "trade_count": 0,
+    "fish_body_capture": 0.0,
+    "benchmark_return": 2.1,
+    "extra": {
+      "strategy": "a_strategy_strict",
+      "initial_capital": 1000000.0
+    },
+    "id": 0
+  },
+  "equity": [
+    {
+      "run_id": 2,
+      "trade_date": "2026-05-06",
+      "equity": 1000000.0,
+      "benchmark_equity": 1014500.0,
+      "id": 0
+    },
+    {
+      "run_id": 2,
+      "trade_date": "2026-05-07",
+      "equity": 1000000.0,
+      "benchmark_equity": 1019369.5999999999,
+      "id": 0
+    },
+    {
+      "run_id": 2,
+      "trade_date": "2026-05-08",
+      "equity": 1000000.0,
+      "benchmark_equity": 1013457.2563199999,
+      "id": 0
+    },
+    {
+      "run_id": 2,
+      "trade_date": "2026-05-11",
+      "equity": 1000000.0,
+      "benchmark_equity": 1030077.9553236478,
+      "id": 0
+    },
+    {
+      "run_id": 2,
+      "trade_date": "2026-05-12",
+      "equity": 1000000.0,
+      "benchmark_equity": 1029253.8929593889,
+      "id": 0
+    },
+    {
+      "run_id": 2,
+      "trade_date": "2026-05-13",
+      "equity": 1000000.0,
+      "benchmark_equity": 1039752.2826675747,
+      "id": 0
+    },
+    {
+      "run_id": 2,
+      "trade_date": "2026-05-14",
+      "equity": 1000000.0,
+      "benchmark_equity": 1022284.4443187593,
+      "id": 0
+    },
+    {
+      "run_id": 2,
+      "trade_date": "2026-05-15",
+      "equity": 1000000.0,
+      "benchmark_equity": 1010834.8585423892,
+      "id": 0
+    },
+    {
+      "run_id": 2,
+      "trade_date": "2026-05-18",
+      "equity": 1000000.0,
+      "benchmark_equity": 1005376.3503062603,
+      "id": 0
+    },
+    {
+      "run_id": 2,
+      "trade_date": "2026-05-19",
+      "equity": 1000000.0,
+      "benchmark_equity": 1009397.8557074855,
+      "id": 0
+    },
+    {
+      "run_id": 2,
+      "trade_date": "2026-05-20",
+      "equity": 1000000.0,
+      "benchmark_equity": 1008994.0965652025,
+      "id": 0
+    },
+    {
+      "run_id": 2,
+      "trade_date": "2026-05-21",
+      "equity": 1000000.0,
+      "benchmark_equity": 994969.0786229462,
+      "id": 0
+    },
+    {
+      "run_id": 2,
+      "trade_date": "2026-05-22",
+      "equity": 1000000.0,
+      "benchmark_equity": 1007903.6766450445,
+      "id": 0
+    },
+    {
+      "run_id": 2,
+      "trade_date": "2026-05-25",
+      "equity": 1000000.0,
+      "benchmark_equity": 1023828.5547360362,
+      "id": 0
+    },
+    {
+      "run_id": 2,
+      "trade_date": "2026-05-26",
+      "equity": 1000000.0,
+      "benchmark_equity": 1029254.8460761373,
+      "id": 0
+    },
+    {
+      "run_id": 2,
+      "trade_date": "2026-05-27",
+      "equity": 1000000.0,
+      "benchmark_equity": 1021020.8073075282,
+      "id": 0
+    }
+  ]
+}

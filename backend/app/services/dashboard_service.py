@@ -15,7 +15,6 @@ from datetime import date, timedelta
 from typing import Any, Optional
 
 import pandas as pd
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.factory import get_adapter
 from app.services.trade_calendar import latest_completed_trade_day, latest_previous_trade_day

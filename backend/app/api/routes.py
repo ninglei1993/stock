@@ -1,26 +1,16 @@
 import asyncio
 from datetime import date, timedelta
 import logging
+import threading
 import time
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 import pandas as pd
-from sqlalchemy import desc, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import AsyncSessionLocal, get_db
 from app.models.tables import (
-    Alert,
-    BacktestEquityDaily,
-    BacktestMetric,
     BacktestRun,
-    BacktestTrade,
-    MarketEnvDaily,
-    SectorDaily,
-    SectorFlowDaily,
     SectorScoreDaily,
-    StockDaily,
     ThemeLeaderDaily,
 )
 from app.adapters.factory import adapter_info, get_adapter
@@ -44,6 +34,9 @@ from app.schemas.common import (
     FlowDayOut,
     LimitStockListOut,
     MarketEnvOut,
+    NearMissItemOut,
+    NearMissListOut,
+    NearMissRuleOut,
     ReviewDayOut,
     SectorDetailOut,
     ConceptOut,
@@ -104,10 +97,6 @@ def _classify_tushare_error(msg: str) -> str:
 
 @router.get("/system/tushare/ping", response_model=TusharePingOut)
 async def tushare_ping():
-    """
-    诊断 Tushare 连接（用于区分 token 无效 / 限流 / 网络/代理异常）。
-    通过一次轻量的 trade_cal 调用判断可用性；不会泄漏 token。
-    """
     if not settings.tushare_configured():
         return TusharePingOut(
             ok=False,
@@ -130,8 +119,7 @@ async def tushare_ping():
         )
     endpoint = ""
     try:
-        from app.adapters.tushare_adapter import _ensure_pro  # type: ignore
-
+        from app.adapters.tushare_adapter import _ensure_pro
         pro = _ensure_pro()
         endpoint = str(getattr(pro, "_DataApi__http_url", "") or "")
     except Exception:
@@ -139,7 +127,6 @@ async def tushare_ping():
 
     t0 = time.monotonic()
     try:
-        # 取近 7 天，trade_cal 是最轻量且最常用的“验 token”接口之一
         end = date.today()
         start = end - timedelta(days=7)
         df = getattr(adapter, "_call")(
@@ -196,13 +183,11 @@ def _build_stocks_in_sector(
     from app.schemas.common import StockInSector, StockPctDayOut
 
     def _get(obj, key, default=None):
-        """Support both attribute access and dict-style get."""
         if isinstance(obj, dict):
             return obj.get(key, default)
         return getattr(obj, key, default)
 
     def _get_date(obj, key):
-        """Get a date field, parsing ISO strings if needed."""
         val = _get(obj, key)
         if isinstance(val, date):
             return val
@@ -227,7 +212,6 @@ def _build_stocks_in_sector(
     anchor_rows.sort(key=lambda r: float(_get(r, "pct_change", 0) or 0), reverse=True)
 
     out: list[StockInSector] = []
-    # limit=0 约定为"展示全部"
     target_rows = anchor_rows if limit <= 0 else anchor_rows[:limit]
     for s in target_rows:
         sc = _get(s, "stock_code", "")
@@ -254,10 +238,6 @@ def _build_stocks_in_sector(
 def _backfill_pct_history(
     stocks: list[StockInSector], display_days: list[date], *, anchor: date
 ) -> list[StockInSector]:
-    """
-    针对 TopN 行中缺失的日期，按“指定交易日 + 指定股票”回填涨跌幅。
-    只补缺口，不改动已有入库值。
-    """
     if not stocks or not display_days:
         return stocks
     adapter = get_adapter()
@@ -276,11 +256,8 @@ def _backfill_pct_history(
             continue
         try:
             day_quotes = adapter.get_stock_quotes(
-                need_codes,
-                td,
-                sector_code="",
-                price_lookback_days=1,
-                skip_flows=True,
+                need_codes, td, sector_code="",
+                price_lookback_days=1, skip_flows=True,
             )
         except Exception:
             continue
@@ -293,7 +270,6 @@ def _backfill_pct_history(
                     StockPctDayOut(trade_date=td, pct_change=qmap[s.stock_code].pct_change)
                 )
             if td == anchor:
-                # 锚点日采用当日实时行情重新校验，避免误判涨停/连板/成交额
                 q = qmap[s.stock_code]
                 s.pct_change = q.pct_change
                 s.is_limit_up = q.is_limit_up
@@ -312,7 +288,6 @@ def _build_stocks_on_demand(
     *,
     limit: int = 30,
 ) -> list[StockInSector]:
-    """从全市场行情缓存 + 成分股列表现场聚合（不持久化 stock_daily）。"""
     from app.schemas.common import StockInSector, StockPctDayOut
     from app.services.ingest_settings_store import effective_max_stocks_per_concept
     from app.services.stock_select import limit_stocks_for_ingest
@@ -329,9 +304,7 @@ def _build_stocks_on_demand(
         return []
     try:
         quotes = adapter.get_stock_quotes(
-            members,
-            trade_date,
-            sector_code,
+            members, trade_date, sector_code,
             price_lookback_days=max(len(display_days), 1),
             skip_flows=True,
         )
@@ -370,7 +343,6 @@ def _resolve_dashboard_snapshot():
 
     snap = get_dashboard_snapshot()
     if snap is not None:
-        # 快照 trade_date 为 epoch（如 1970-01-01）时视为无效，清除后重建
         if snap.trade_date < date(1970, 1, 3):
             import logging
             logging.getLogger(__name__).warning(
@@ -385,7 +357,6 @@ def _resolve_dashboard_snapshot():
     loaded = LatestScanStore.load()
     if not loaded:
         return None
-    # load() 已做 epoch 修正，但再保险一次
     if loaded.trade_date < date(1970, 1, 3):
         return None
     snap = VolatileDashboardSnapshot(
@@ -401,27 +372,14 @@ def _resolve_dashboard_snapshot():
     return snap
 
 
-async def _latest_trade_date(session: AsyncSession) -> Optional[date]:
-    row_db = (
-        await session.execute(
-            select(SectorScoreDaily.trade_date).order_by(desc(SectorScoreDaily.trade_date)).limit(1)
-        )
-    ).scalar_one_or_none()
-    try:
-        completed = latest_completed_trade_day()
-    except Exception:
-        completed = None
-    if row_db is not None and completed is not None:
-        if row_db > completed:
-            return completed
-        return row_db
-    if row_db is not None:
-        return row_db
-    # DB 为空时回退到内存快照的交易日
+def _latest_trade_date() -> Optional[date]:
     snap = _resolve_dashboard_snapshot()
     if snap and snap.trade_date and snap.trade_date >= date(2020, 1, 1):
         return snap.trade_date
-    return completed
+    try:
+        return latest_completed_trade_day()
+    except Exception:
+        return None
 
 
 def _normalize_requested_trade_date(trade_date: Optional[date]) -> Optional[date]:
@@ -444,7 +402,6 @@ def _sector_score_out(
     compact_rules: list[dict] = []
     if include_rules:
         raw_rules = list(getattr(s, "rules_json", []) or [])
-        # 列表页仅展示规则“通过与否”摘要，避免把大块调试字段透传导致响应过大。
         for r in raw_rules:
             if isinstance(r, dict):
                 compact_rules.append(
@@ -470,7 +427,6 @@ def _sector_score_out(
         relative_score=s.relative_score,
         position_hint=s.position_hint,
         leader_stock=leader.stock_code if leader else None,
-        # 列表接口不做名称兜底远程拉取，避免首次请求触发全市场名称加载而阻塞仪表盘。
         leader_stock_name=((leader.stock_name or "") if leader else None),
         leader_streak=leader.limit_up_streak if leader else None,
         pct_change=pct_change,
@@ -509,8 +465,6 @@ def _build_data_missing_items(
 
 @router.get("/health")
 async def health():
-    # Health endpoint must stay lightweight and avoid triggering
-    # remote adapter initialization (which can block startup checks).
     return {
         "status": "ok",
         "product": "ThemeRadar",
@@ -520,7 +474,6 @@ async def health():
 
 @router.post("/system/reload-config")
 async def reload_config():
-    """修改 .env 后调用，重新加载配置与概念缓存（无需整容器重启）。"""
     import importlib
 
     import app.adapters.factory as factory_mod
@@ -641,24 +594,18 @@ async def save_scan_history(body: dict):
 
 
 @router.post("/system/clear-data")
-async def clear_all_data(db: AsyncSession = Depends(get_db)):
-    """清空缓存、内存快照与库内扫描/演示数据。"""
-    from app.services.data_reset import (
-        clear_runtime_caches,
-        clear_scan_database,
-    )
+async def clear_all_data():
+    from app.services.data_reset import clear_runtime_caches
+
     clear_runtime_caches()
-    counts = await clear_scan_database(db)
     _reset_data_source_runtime()
     return {
         "message": "已清空缓存、扫描数据、本地 JSON 行情缓存与最新扫盘结果",
-        "deleted": counts,
     }
 
 
 @router.post("/system/ingest-settings")
 async def set_ingest_settings(body: SetIngestSettingsIn):
-    """设置每个板块最多分析的成分股数（0=全部）。写入 ingest_settings.override.json。"""
     from app.services.ingest_settings_store import write_max_stocks_override
 
     max_stocks = int(body.max_stocks_per_concept or 0)
@@ -671,13 +618,11 @@ async def set_ingest_settings(body: SetIngestSettingsIn):
 
 @router.get("/tasks/scan", response_model=TaskStatusOut)
 async def scan_task_status():
-    """查询后台扫盘任务进度（供前端轮询）。真正启动扫盘请用 POST /scan/latest。"""
     return TaskStatusOut(**get_scan_task().to_dict())
 
 
 @router.post("/tasks/scan/cancel")
 async def cancel_scan_task():
-    """请求停止当前后台扫盘任务。"""
     ok = request_cancel_scan()
     if not ok:
         return {"cancelled": False, "message": "当前没有正在运行的扫描任务"}
@@ -714,17 +659,8 @@ _INGEST_LOOKBACK_DAYS = 8
 
 
 def _run_scan_sync(trade_days: list[date]) -> None:
-    """
-    在线程池执行扫盘。
-    优化：仅对最近 N 天执行 ingest（volume_ratio/market_share/inflow 所需），
-    只对最后一天执行评分，MA20/pct_20d 由 ths_daily 实时补充。
-    """
     import asyncio
     import logging
-
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
-    from app.config import settings
 
     if not trade_days:
         return
@@ -734,7 +670,7 @@ def _run_scan_sync(trade_days: list[date]) -> None:
     concepts_per_day = _scan_concept_total()
     OVERHEAD_PER_DAY = 3
     steps_per_day = concepts_per_day + OVERHEAD_PER_DAY
-    total = steps_per_day * len(ingest_days) + 1  # +1 for final scoring
+    total = steps_per_day * len(ingest_days) + 1
     n_days = len(ingest_days)
     scan_completed = False
 
@@ -764,234 +700,221 @@ def _run_scan_sync(trade_days: list[date]) -> None:
             last_td,
         )
 
-        worker_engine = create_async_engine(
-            settings.database_url,
-            echo=False,
-            pool_pre_ping=True,
-        )
-        WorkerSession = async_sessionmaker(
-            worker_engine, class_=AsyncSession, expire_on_commit=False
-        )
         try:
-            async with WorkerSession() as session:
-                ingestion = IngestionService(session)
+            ingestion = IngestionService()
 
-                scores: list = []
+            scores: list = []
 
-                for day_idx, trade_date in enumerate(ingest_days):
-                    if is_cancel_requested():
-                        cancel_scan()
-                        log.info("[扫描] 用户请求取消，已中止")
-                        return
-
-                    day_offset = day_idx * steps_per_day
-                    day_label = f"[{day_idx + 1}/{n_days}] {trade_date}"
-
-                    update_scan_progress(
-                        day_offset,
-                        total,
-                        f"{day_label} 拉取板块数据…",
-                        current_trade_date=str(trade_date),
-                    )
-
-                    def _make_on_progress(
-                        d_offset: int, td: date, d_idx: int
-                    ):
-                        def on_progress(
-                            done: int, concept_total: int, label: str = ""
-                        ) -> None:
-                            step = d_offset + 1 + done
-                            if done == 0:
-                                msg = f"[{d_idx + 1}/{n_days}] {td} 大盘环境与预取数据…"
-                            elif label:
-                                msg = f"[{d_idx + 1}/{n_days}] {td} 板块 {done}/{concept_total}：{label}"
-                            else:
-                                msg = f"[{d_idx + 1}/{n_days}] {td} 板块 {done}/{concept_total}…"
-                            update_scan_progress(
-                                step,
-                                total,
-                                msg,
-                                current_trade_date=str(td),
-                            )
-
-                        return on_progress
-
-                    on_progress = _make_on_progress(day_offset, trade_date, day_idx)
-
-                    ingest_t0 = time.monotonic()
-                    is_last = (trade_date == last_td)
-                    await ingestion.ingest_day(
-                        trade_date,
-                        on_progress=on_progress,
-                        skip_market_env=not is_last,
-                    )
-                    if is_cancel_requested():
-                        cancel_scan()
-                        log.info("[扫描] 用户请求取消（ingest进行中），已中止")
-                        return
-                    log.info(
-                        "[扫描] ingest %s 完成 耗时=%.1fs",
-                        trade_date,
-                        time.monotonic() - ingest_t0,
-                    )
-
-                    update_scan_progress(
-                        day_offset + steps_per_day,
-                        total,
-                        f"{day_label} 完成",
-                        current_trade_date=str(trade_date),
-                    )
-
+            for day_idx, trade_date in enumerate(ingest_days):
                 if is_cancel_requested():
                     cancel_scan()
-                    log.info("[扫描] 用户请求取消（评分前），已中止")
+                    log.info("[扫描] 用户请求取消，已中止")
                     return
 
-                # 仅对最后一个交易日执行评分
-                score_offset = n_days * steps_per_day
+                day_offset = day_idx * steps_per_day
+                day_label = f"[{day_idx + 1}/{n_days}] {trade_date}"
+
                 update_scan_progress(
-                    score_offset,
+                    day_offset,
                     total,
-                    f"评分 {last_td}…",
-                    current_trade_date=str(last_td),
-                )
-                scanner = ScanService(session)
-                scores = await scanner.run_scan(last_td)
-                from app.services.volatile_scan import get_today_buffer
-
-                buf_day = get_today_buffer()
-                if buf_day is not None:
-                    buf_day.scores_by_date[last_td] = list(scores)
-
-                score_phase_t0 = tracker.start_phase(
-                    "theme_score",
-                    "板块评分与预警",
-                    f"共 {len(trade_days)} 个交易日评分完成",
-                )
-                tracker.end_phase(
-                    "theme_score",
-                    "板块评分与预警",
-                    "最终以最近交易日更新仪表盘",
-                    score_phase_t0,
-                    extra=f"{len(scores)}个板块 @ {last_td}",
-                )
-                from app.services.latest_scan_store import LatestScanStore
-                from app.services.scan_context import (
-                    get_calendar_bounds,
-                    pop_market_cache_stats,
-                )
-                from app.services.storage_mode import uses_file_scan_storage
-                from app.services.volatile_scan import (
-                    VolatileDashboardSnapshot,
-                    get_today_buffer,
-                    set_dashboard_snapshot,
+                    f"{day_label} 拉取板块数据…",
+                    current_trade_date=str(trade_date),
                 )
 
-                buf_r = get_today_buffer()
-                if buf_r and not scores and last_td in buf_r.scores_by_date:
-                    scores = list(buf_r.scores_by_date[last_td])
-                    log.warning(
-                        "[数据] 最终日评分为空，回退使用 scores_by_date[%s] count=%d",
-                        last_td,
-                        len(scores),
-                    )
-                if buf_r and not scores and buf_r.sectors_by_code:
-                    log.warning(
-                        "[数据] 评分为空但缓冲区内有 %d 个板块，重跑最终日评分",
-                        len(buf_r.sectors_by_code),
-                    )
-                    scanner = ScanService(session)
-                    scores = await scanner.run_scan(last_td)
-                    buf_r.scores_by_date[last_td] = list(scores)
-                # 防止“当日行情全空”覆盖仪表盘：仅记录告警，不再中断任务。
-                if buf_r:
-                    final_rows = [
-                        r
-                        for r in (buf_r.sector_rows or [])
-                        if getattr(r, "trade_date", None) == last_td
-                    ]
-                    has_effective = any(
-                        int(getattr(r, "total_count", 0) or 0) > 0
-                        and float(getattr(r, "close", 0) or 0) > 0
-                        for r in final_rows
-                    )
-                    if final_rows and not has_effective:
-                        log.error(
-                            "[数据] %s 板块行情全空（total_count=0），继续发布快照供排查",
-                            last_td,
+                def _make_on_progress(
+                    d_offset: int, td: date, d_idx: int
+                ):
+                    def on_progress(
+                        done: int, concept_total: int, label: str = ""
+                    ) -> None:
+                        step = d_offset + 1 + done
+                        if done == 0:
+                            msg = f"[{d_idx + 1}/{n_days}] {td} 大盘环境与预取数据…"
+                        elif label:
+                            msg = f"[{d_idx + 1}/{n_days}] {td} 板块 {done}/{concept_total}：{label}"
+                        else:
+                            msg = f"[{d_idx + 1}/{n_days}] {td} 板块 {done}/{concept_total}…"
+                        update_scan_progress(
+                            step,
+                            total,
+                            msg,
+                            current_trade_date=str(td),
                         )
 
-                env_for_dash = buf_r.market_env if buf_r else None
-                lm: dict = {}
-                if buf_r:
-                    lm = {
-                        code: leader
-                        for code, leader in buf_r.leaders_by_code.items()
-                        if getattr(leader, "trade_date", None) == last_td
-                    }
-                cal_start, cal_end = get_calendar_bounds()
-                sd: dict = {}
-                sf: dict = {}
-                if buf_r:
-                    sd = dict(buf_r.sectors_by_code)
-                    sf = dict(buf_r.flows_by_code)
-                snap = VolatileDashboardSnapshot(
-                    trade_date=last_td,
-                    env=env_for_dash,
-                    scores=list(scores),
-                    leader_map=lm,
-                    scan_trade_days=list(trade_days),
-                    sector_dailies=sd,
-                    sector_flows=sf,
+                    return on_progress
+
+                on_progress = _make_on_progress(day_offset, trade_date, day_idx)
+
+                ingest_t0 = time.monotonic()
+                is_last = (trade_date == last_td)
+                await ingestion.ingest_day(
+                    trade_date,
+                    on_progress=on_progress,
+                    skip_market_env=not is_last,
                 )
-                set_dashboard_snapshot(snap)
-                if uses_file_scan_storage():
-                    mstats = pop_market_cache_stats()
-                    LatestScanStore.save(
-                        trade_date=last_td,
-                        scores=list(scores),
-                        market_env=env_for_dash,
-                        leader_map=lm,
-                        scan_trade_days=list(trade_days),
-                        scan_start_date=cal_start,
-                        scan_end_date=cal_end,
-                        market_cache_stats=mstats or None,
-                        sector_dailies=sd,
-                        sector_flows=sf,
-                    )
-                    log.info(
-                        "[数据] 已写入 scan/latest.json trade_date=%s scores=%d "
-                        "行情缓存跳过 %s 日 新拉 %s 日",
-                        last_td,
-                        len(scores),
-                        mstats.get("skipped", 0),
-                        mstats.get("fetched", 0),
-                    )
-                await session.rollback()
+                if is_cancel_requested():
+                    cancel_scan()
+                    log.info("[扫描] 用户请求取消（ingest进行中），已中止")
+                    return
                 log.info(
-                    "[数据] 内存快照已发布 trade_date=%s scores=%d",
+                    "[扫描] ingest %s 完成 耗时=%.1fs",
+                    trade_date,
+                    time.monotonic() - ingest_t0,
+                )
+
+                update_scan_progress(
+                    day_offset + steps_per_day,
+                    total,
+                    f"{day_label} 完成",
+                    current_trade_date=str(trade_date),
+                )
+
+            if is_cancel_requested():
+                cancel_scan()
+                log.info("[扫描] 用户请求取消（评分前），已中止")
+                return
+
+            score_offset = n_days * steps_per_day
+            update_scan_progress(
+                score_offset,
+                total,
+                f"评分 {last_td}…",
+                current_trade_date=str(last_td),
+            )
+            scanner = ScanService()
+            scores = await scanner.run_scan(last_td)
+            from app.services.volatile_scan import get_today_buffer
+
+            buf_day = get_today_buffer()
+            if buf_day is not None:
+                buf_day.scores_by_date[last_td] = list(scores)
+
+            score_phase_t0 = tracker.start_phase(
+                "theme_score",
+                "板块评分与预警",
+                f"共 {len(trade_days)} 个交易日评分完成",
+            )
+            tracker.end_phase(
+                "theme_score",
+                "板块评分与预警",
+                "最终以最近交易日更新仪表盘",
+                score_phase_t0,
+                extra=f"{len(scores)}个板块 @ {last_td}",
+            )
+            from app.services.latest_scan_store import LatestScanStore
+            from app.services.scan_context import (
+                get_calendar_bounds,
+                pop_market_cache_stats,
+            )
+            from app.services.storage_mode import uses_file_scan_storage
+            from app.services.volatile_scan import (
+                VolatileDashboardSnapshot,
+                get_today_buffer,
+                set_dashboard_snapshot,
+            )
+
+            buf_r = get_today_buffer()
+            if buf_r and not scores and last_td in buf_r.scores_by_date:
+                scores = list(buf_r.scores_by_date[last_td])
+                log.warning(
+                    "[数据] 最终日评分为空，回退使用 scores_by_date[%s] count=%d",
                     last_td,
                     len(scores),
                 )
-                if not scores:
-                    fail_scan(
-                        f"扫描完成但未产生板块评分（交易日 {last_td}），请检查板块勾选与日期区间"
-                    )
-                    return
-                finish_scan(len(scores), td_str)
-                scan_completed = True
-                log.info(
-                    "[数据] _run_scan_sync 全部完成 总耗时=%.2fs last_trade_date=%s",
-                    time.monotonic() - scan_t0,
-                    last_td,
+            if buf_r and not scores and buf_r.sectors_by_code:
+                log.warning(
+                    "[数据] 评分为空但缓冲区内有 %d 个板块，重跑最终日评分",
+                    len(buf_r.sectors_by_code),
                 )
+                scanner = ScanService()
+                scores = await scanner.run_scan(last_td)
+                buf_r.scores_by_date[last_td] = list(scores)
+            if buf_r:
+                final_rows = [
+                    r
+                    for r in (buf_r.sector_rows or [])
+                    if getattr(r, "trade_date", None) == last_td
+                ]
+                has_effective = any(
+                    int(getattr(r, "total_count", 0) or 0) > 0
+                    and float(getattr(r, "close", 0) or 0) > 0
+                    for r in final_rows
+                )
+                if final_rows and not has_effective:
+                    log.error(
+                        "[数据] %s 板块行情全空（total_count=0），继续发布快照供排查",
+                        last_td,
+                    )
+
+            env_for_dash = buf_r.market_env if buf_r else None
+            lm: dict = {}
+            if buf_r:
+                lm = {
+                    code: leader
+                    for code, leader in buf_r.leaders_by_code.items()
+                    if getattr(leader, "trade_date", None) == last_td
+                }
+            cal_start, cal_end = get_calendar_bounds()
+            sd: dict = {}
+            sf: dict = {}
+            if buf_r:
+                sd = dict(buf_r.sectors_by_code)
+                sf = dict(buf_r.flows_by_code)
+            snap = VolatileDashboardSnapshot(
+                trade_date=last_td,
+                env=env_for_dash,
+                scores=list(scores),
+                leader_map=lm,
+                scan_trade_days=list(trade_days),
+                sector_dailies=sd,
+                sector_flows=sf,
+            )
+            set_dashboard_snapshot(snap)
+            if uses_file_scan_storage():
+                mstats = pop_market_cache_stats()
+                LatestScanStore.save(
+                    trade_date=last_td,
+                    scores=list(scores),
+                    market_env=env_for_dash,
+                    leader_map=lm,
+                    scan_trade_days=list(trade_days),
+                    scan_start_date=cal_start,
+                    scan_end_date=cal_end,
+                    market_cache_stats=mstats or None,
+                    sector_dailies=sd,
+                    sector_flows=sf,
+                )
+                log.info(
+                    "[数据] 已写入 scan/latest.json trade_date=%s scores=%d "
+                    "行情缓存跳过 %s 日 新拉 %s 日",
+                    last_td,
+                    len(scores),
+                    mstats.get("skipped", 0),
+                    mstats.get("fetched", 0),
+                )
+            log.info(
+                "[数据] 内存快照已发布 trade_date=%s scores=%d",
+                last_td,
+                len(scores),
+            )
+            if not scores:
+                fail_scan(
+                    f"扫描完成但未产生板块评分（交易日 {last_td}），请检查板块勾选与日期区间"
+                )
+                return
+            finish_scan(len(scores), td_str)
+            scan_completed = True
+            log.info(
+                "[数据] _run_scan_sync 全部完成 总耗时=%.2fs last_trade_date=%s",
+                time.monotonic() - scan_t0,
+                last_td,
+            )
         except Exception as exc:
             fail_scan(str(exc))
             raise
         finally:
             tracker.log_summary()
             set_tracker(None)
-            await worker_engine.dispose()
 
     log = logging.getLogger(__name__)
     try:
@@ -1081,15 +1004,14 @@ async def scan_latest(
 
 
 @router.post("/scan/{trade_date}")
-async def trigger_scan(trade_date: date, db: AsyncSession = Depends(get_db)):
+async def trigger_scan(trade_date: date):
     trade_date = resolve_scan_date(trade_date)
-    ingestion = IngestionService(db)
+    ingestion = IngestionService()
     await ingestion.ingest_day(trade_date)
-    scanner = ScanService(db)
+    scanner = ScanService()
     scores = await scanner.run_scan(trade_date)
 
     from app.services.storage_mode import uses_file_scan_storage
-
     from app.services.latest_scan_store import LatestScanStore
     from app.services.volatile_scan import (
         VolatileDashboardSnapshot,
@@ -1115,7 +1037,6 @@ async def trigger_scan(trade_date: date, db: AsyncSession = Depends(get_db)):
             leader_map=lm,
             scan_trade_days=[trade_date],
         )
-    await db.rollback()
 
     return {"trade_date": str(trade_date), "sectors_scored": len(scores)}
 
@@ -1129,7 +1050,6 @@ def _fetch_index_summaries(adapter, td: date) -> list[dict[str, Any]]:
         ("000300.SH", "沪深300"),
     ]
     out: list[dict[str, Any]] = []
-    # 使用更长回看窗口，确保长假后也能拿到“上一交易日”收盘对比基准。
     start = td - timedelta(days=40)
     for code, name in codes:
         try:
@@ -1164,7 +1084,6 @@ def _fetch_index_summaries(adapter, td: date) -> list[dict[str, Any]]:
 
 @router.get("/dashboard", response_model=DashboardOut)
 async def dashboard(trade_date: Optional[date] = None):
-    """仪表盘：仅展示市场总览 + 指数涨幅（不依赖扫盘数据）。"""
     from app.services.dashboard_service import build_dashboard_response
 
     result = await build_dashboard_response(trade_date)
@@ -1175,7 +1094,6 @@ async def dashboard(trade_date: Optional[date] = None):
 async def dashboard_limit_stocks(
     side: str = Query(default="up", pattern="^(up|down)$"),
     trade_date: Optional[date] = None,
-    db: AsyncSession = Depends(get_db),
 ):
     from app.services.market_cache import MarketTable, get_market_cache
     from app.services.dashboard_service import resolve_dashboard_trade_date
@@ -1207,7 +1125,7 @@ async def dashboard_limit_stocks(
         try:
             adapter = get_adapter()
             if hasattr(adapter, "_daily_market"):
-                daily = adapter._daily_market(td)  # type: ignore[attr-defined]
+                daily = adapter._daily_market(td)
         except Exception:
             daily = None
 
@@ -1223,7 +1141,7 @@ async def dashboard_limit_stocks(
     if (limit_df is None or limit_df.empty) and adapter is not None:
         try:
             if hasattr(adapter, "_limit_table"):
-                limit_df = adapter._limit_table(td)  # type: ignore[attr-defined]
+                limit_df = adapter._limit_table(td)
         except Exception:
             limit_df = None
 
@@ -1278,73 +1196,17 @@ async def dashboard_limit_stocks(
         ascending=[False, True] if side == "up" else [True, True],
     )
 
-    # 名称优先使用 Tushare stock_basic 全量映射；若缓存曾异常为空，尝试刷新一次。
     fresh_name_map: dict[str, str] = {}
     try:
         from app.adapters.tushare_adapter import load_stock_name_map
-
         fresh_name_map = load_stock_name_map()
         if not fresh_name_map:
             clear_name_cache()
             fresh_name_map = load_stock_name_map()
     except Exception:
         fresh_name_map = {}
-    if not fresh_name_map:
-        try:
-            adapter = adapter or get_adapter()
-            if hasattr(adapter, "_call"):
-                name_df = adapter._call(
-                    "stock_basic",
-                    exchange="",
-                    list_status="L",
-                    fields="ts_code,name",
-                )
-                if name_df is not None and not name_df.empty and {"ts_code", "name"}.issubset(set(name_df.columns)):
-                    fresh_name_map = {
-                        to_internal_code(str(r["ts_code"])): str(r["name"])
-                        for _, r in name_df.iterrows()
-                        if str(r.get("ts_code", "")).strip()
-                    }
-        except Exception:
-            fresh_name_map = {}
-
-    def _fetch_tushare_names_fallback(ts_codes: list[str], data_adapter: Any) -> dict[str, str]:
-        """仅使用 Tushare stock_basic 兜底补充股票名称。"""
-        if not ts_codes or not hasattr(data_adapter, "_call"):
-            return {}
-        out: dict[str, str] = {}
-        for raw in sorted({str(c or "").strip().upper() for c in ts_codes if str(c or "").strip()}):
-            df = None
-            for status in ("L", "D", "P"):
-                try:
-                    df = data_adapter._call(
-                        "stock_basic",
-                        ts_code=raw,
-                        list_status=status,
-                        fields="ts_code,name",
-                    )
-                except Exception as exc:
-                    logger.debug("[数据] stock_basic 名称兜底失败 ts_code=%s status=%s: %s", raw, status, exc)
-                    continue
-                if df is not None and not df.empty:
-                    break
-            if (df is None or df.empty):
-                try:
-                    df = data_adapter._call("stock_basic", ts_code=raw, fields="ts_code,name")
-                except Exception as exc:
-                    logger.debug("[数据] stock_basic 名称兜底失败 ts_code=%s: %s", raw, exc)
-                    continue
-            if df is None or df.empty or not {"ts_code", "name"}.issubset(set(df.columns)):
-                continue
-            row = df.iloc[0]
-            ts_code = str(row.get("ts_code", "")).strip().upper()
-            name = str(row.get("name", "")).strip()
-            if ts_code and name:
-                out[ts_code] = name
-        return out
 
     row_items: list[dict[str, Any]] = []
-    unresolved_codes: list[str] = []
     for _, r in rows.iterrows():
         ts_code = str(r["ts_code"])
         internal = to_internal_code(ts_code)
@@ -1356,8 +1218,6 @@ async def dashboard_limit_stocks(
             or resolve_stock_name(ts_code)
             or ts_code
         )
-        if stock_name in {internal, ts_code, ""}:
-            unresolved_codes.append(ts_code)
         row_items.append(
             {
                 "stock_code": ts_code,
@@ -1367,14 +1227,6 @@ async def dashboard_limit_stocks(
                 "pct_change": round(float(r["pct_change"]), 2),
             }
         )
-    if unresolved_codes:
-        adapter = adapter or get_adapter()
-        fallback_names = _fetch_tushare_names_fallback(unresolved_codes, adapter)
-        if fallback_names:
-            for item in row_items:
-                code = item["stock_code"]
-                if item["stock_name"] in {code, to_internal_code(code), ""}:
-                    item["stock_name"] = fallback_names.get(code, item["stock_name"])
     items = row_items
     return LimitStockListOut(trade_date=td, side=side, total=len(items), items=items)
 
@@ -1383,57 +1235,29 @@ async def dashboard_limit_stocks(
 async def list_alerts(
     trade_date: Optional[date] = None,
     alert_code: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
 ):
-    td = _normalize_requested_trade_date(trade_date) or await _latest_trade_date(db)
-    if not td:
-        return []
-    q = select(Alert).where(Alert.trade_date == td).order_by(desc(Alert.id))
-    if alert_code:
-        q = q.where(Alert.alert_code == alert_code)
-    rows = (await db.execute(q)).scalars().all()
-    return [AlertOut.model_validate(r) for r in rows]
+    return []
 
 
 @router.get("/sectors", response_model=SectorListOut)
 async def list_sectors(
     trade_date: Optional[date] = None,
     scored_only: bool = Query(True, description="仅返回已扫描评分的板块（更快）"),
-    db: AsyncSession = Depends(get_db),
 ):
     from app.services.concept_cache import get_cached_concepts
 
-    td = _normalize_requested_trade_date(trade_date) or await _latest_trade_date(db)
+    td = _normalize_requested_trade_date(trade_date) or _latest_trade_date()
     info = adapter_info()
     all_concepts: list = []
     if not scored_only:
         all_concepts, _ = get_cached_concepts()
     universe_total = info.get("universe_total") or len(all_concepts)
 
-    score_map: dict[str, SectorScoreDaily] = {}
+    score_map: dict[str, Any] = {}
     pct_map: dict[str, float] = {}
-    leader_map: dict[str, ThemeLeaderDaily] = {}
+    leader_map: dict[str, Any] = {}
 
     if td:
-        scores = (
-            await db.execute(
-                select(SectorScoreDaily).where(SectorScoreDaily.trade_date == td)
-            )
-        ).scalars().all()
-        score_map = {s.sector_code: s for s in scores}
-        daily_rows = (
-            await db.execute(select(SectorDaily).where(SectorDaily.trade_date == td))
-        ).scalars().all()
-        pct_map = {r.sector_code: r.pct_change for r in daily_rows}
-        leaders = (
-            await db.execute(
-                select(ThemeLeaderDaily).where(ThemeLeaderDaily.trade_date == td)
-            )
-        ).scalars().all()
-        leader_map = {l.sector_code: l for l in leaders}
-
-    # DB 无数据时回退到内存快照（scan_volatile_storage=true 场景）
-    if not score_map and td:
         snap = _resolve_dashboard_snapshot()
         if snap and snap.scores:
             snap_days = list(snap.scan_trade_days) if snap.scan_trade_days else []
@@ -1547,9 +1371,8 @@ async def sector_detail(
     stocks_limit: int = Query(
         30, ge=0, description="成分股展示条数（0=全部，可能较慢）"
     ),
-    db: AsyncSession = Depends(get_db),
 ):
-    td = _normalize_requested_trade_date(trade_date) or await _latest_trade_date(db)
+    td = _normalize_requested_trade_date(trade_date) or _latest_trade_date()
     if not td:
         raise HTTPException(404, "No data")
 
@@ -1693,178 +1516,25 @@ async def sector_detail(
                     data_missing_items=missing_items,
                 )
 
-    score = (
-        await db.execute(
-            select(SectorScoreDaily).where(
-                SectorScoreDaily.trade_date == td,
-                SectorScoreDaily.sector_code == sector_code,
-            )
-        )
-    ).scalar_one_or_none()
-    if not score:
-        raise HTTPException(404, "Sector not found")
-
-    daily = (
-        await db.execute(
-            select(SectorDaily).where(
-                SectorDaily.sector_code == sector_code,
-                SectorDaily.trade_date == td,
-            )
-        )
-    ).scalar_one_or_none()
-    flow = (
-        await db.execute(
-            select(SectorFlowDaily).where(
-                SectorFlowDaily.sector_code == sector_code,
-                SectorFlowDaily.trade_date == td,
-            )
-        )
-    ).scalar_one_or_none()
-    leader = (
-        await db.execute(
-            select(ThemeLeaderDaily).where(
-                ThemeLeaderDaily.sector_code == sector_code,
-                ThemeLeaderDaily.trade_date == td,
-            )
-        )
-    ).scalar_one_or_none()
-    history_rows_for_days = (
-        await db.execute(
-            select(SectorScoreDaily.trade_date)
-            .where(SectorScoreDaily.sector_code == sector_code)
-            .order_by(desc(SectorScoreDaily.trade_date))
-            .limit(_PCT_HISTORY_LIMIT)
-        )
-    ).scalars().all()
-    scan_days_db = sorted(set(history_rows_for_days))
-    display_days = _pct_display_days(td, scan_days_db or [td])
-
-    stock_rows_multi = (
-        await db.execute(
-            select(StockDaily).where(
-                StockDaily.sector_code == sector_code,
-                StockDaily.trade_date.in_(display_days),
-            )
-        )
-    ).scalars().all()
-    stock_models = _build_stocks_in_sector(
-        sector_code, td, list(stock_rows_multi), display_days, limit=stocks_limit
-    )
-    stock_models = _backfill_pct_history(stock_models, display_days, anchor=td)
-
-    history_rows = (
-        await db.execute(
-            select(SectorScoreDaily)
-            .where(SectorScoreDaily.sector_code == sector_code)
-            .order_by(SectorScoreDaily.trade_date)
-            .limit(10)
-        )
-    ).scalars().all()
-
-    flow_history_rows = (
-        await db.execute(
-            select(SectorFlowDaily)
-            .where(SectorFlowDaily.sector_code == sector_code)
-            .order_by(desc(SectorFlowDaily.trade_date))
-            .limit(20)
-        )
-    ).scalars().all()
-    flow_history = [
-        FlowDayOut(
-            trade_date=f.trade_date,
-            net_inflow_wan=round(f.net_inflow_main, 2),
-            net_inflow_yi=round(f.net_inflow_main / 10000, 4),
-        )
-        for f in reversed(flow_history_rows)
-    ]
-
-    reasons_raw = getattr(score, "rule_fail_reasons", None)
-    if isinstance(reasons_raw, str):
-        rule_fail_reasons = [x for x in reasons_raw.split("；") if x]
-    elif isinstance(reasons_raw, list):
-        rule_fail_reasons = reasons_raw
-    else:
-        rule_fail_reasons = []
-    net_wan = flow.net_inflow_main if flow else 0.0
-    up_c = daily.up_count if daily else 0
-    tot_c = daily.total_count if daily else 1
-    missing_items = _build_data_missing_items(daily, flow, stock_models)
-
-    return SectorDetailOut(
-        sector_code=sector_code,
-        sector_name=score.sector_name,
-        trade_date=td,
-        pct_display_days=display_days,
-        stage=score.stage,
-        total_score=score.total_score,
-        is_main_line=bool(getattr(score, "is_main_line", False)),
-        main_line_tier=str(getattr(score, "main_line_tier", "rotation") or "rotation"),
-        confirm_state=str(getattr(score, "confirm_state", "pending") or "pending"),
-        exit_state=str(getattr(score, "exit_state", "normal") or "normal"),
-        source_tag=str(getattr(score, "source_tag", "auto") or "auto"),
-        rules=list(getattr(score, "rules_json", []) or []),
-        rule_fail_reasons=rule_fail_reasons,
-        limit_up_count=daily.limit_up_count if daily else 0,
-        big_yang_count=daily.big_yang_count if daily else 0,
-        net_inflow_main=net_wan,
-        net_inflow_yi=round(net_wan / 10000, 2),
-        inflow_days=flow.inflow_days if flow else 0,
-        up_count=up_c,
-        total_count=tot_c,
-        up_ratio=round(up_c / tot_c, 4) if tot_c else 0,
-        blow_up_rate=daily.blow_up_rate if daily else 0,
-        position_hint=score.position_hint,
-        leader={
-            "stock_code": leader.stock_code,
-            "stock_name": leader.stock_name or resolve_stock_name(leader.stock_code),
-            "streak": leader.limit_up_streak,
-            "pct_change": leader.pct_change,
-        }
-        if leader
-        else None,
-        stocks=stock_models,
-        history=[
-            {
-                "trade_date": str(h.trade_date),
-                "total_score": h.total_score,
-                "stage": h.stage,
-            }
-            for h in history_rows
-        ],
-        flow_history=flow_history,
-        data_missing_items=missing_items,
-    )
+    raise HTTPException(404, "Sector not found (no scan data available)")
 
 
 @router.get("/review/{trade_date}", response_model=ReviewDayOut)
-async def review_day(trade_date: date, db: AsyncSession = Depends(get_db)):
-    scores = (
-        await db.execute(
-            select(SectorScoreDaily)
-            .where(SectorScoreDaily.trade_date == trade_date)
-            .order_by(SectorScoreDaily.rank)
-            .limit(5)
-        )
-    ).scalars().all()
+async def review_day(trade_date: date):
+    snap = _resolve_dashboard_snapshot()
     sectors = []
-    for s in scores:
-        future = (
-            await db.execute(
-                select(SectorDaily).where(
-                    SectorDaily.sector_code == s.sector_code,
-                    SectorDaily.trade_date > trade_date,
-                ).order_by(SectorDaily.trade_date).limit(5)
+    if snap and snap.scores:
+        scores = sorted(snap.scores, key=lambda s: s.rank)[:5]
+        for s in scores:
+            sectors.append(
+                {
+                    "sector_code": s.sector_code,
+                    "sector_name": s.sector_name,
+                    "score": s.total_score,
+                    "stage": s.stage,
+                    "future_pcts": [],
+                }
             )
-        ).scalars().all()
-        sectors.append(
-            {
-                "sector_code": s.sector_code,
-                "sector_name": s.sector_name,
-                "score": s.total_score,
-                "stage": s.stage,
-                "future_pcts": [f.pct_change for f in future],
-            }
-        )
     return ReviewDayOut(trade_date=trade_date, sectors=sectors)
 
 
@@ -1872,22 +1542,17 @@ async def review_day(trade_date: date, db: AsyncSession = Depends(get_db)):
 async def a_strategy_main_lines(
     trade_date: Optional[date] = None,
     include_rejected: bool = Query(True, description="是否包含未通过主线规则的板块"),
-    db: AsyncSession = Depends(get_db),
 ):
-    td = _normalize_requested_trade_date(trade_date) or await _latest_trade_date(db)
+    td = _normalize_requested_trade_date(trade_date) or _latest_trade_date()
     if not td:
         return AStrategyListOut(trade_date=None, sectors=[])
-    rows = (
-        await db.execute(
-            select(SectorScoreDaily)
-            .where(SectorScoreDaily.trade_date == td)
-            .order_by(SectorScoreDaily.rank)
-        )
-    ).scalars().all()
-    leaders = (
-        await db.execute(select(ThemeLeaderDaily).where(ThemeLeaderDaily.trade_date == td))
-    ).scalars().all()
-    leader_map = {l.sector_code: l for l in leaders}
+
+    snap = _resolve_dashboard_snapshot()
+    if not snap or not snap.scores:
+        return AStrategyListOut(trade_date=td, sectors=[])
+
+    rows = sorted(snap.scores, key=lambda s: s.rank)
+    leader_map = snap.leader_map or {}
     out = [_sector_score_out(s, leader_map.get(s.sector_code)) for s in rows]
     if not include_rejected:
         out = [s for s in out if s.is_main_line]
@@ -1898,9 +1563,8 @@ async def a_strategy_main_lines(
 async def a_strategy_main_line_detail(
     sector_code: str,
     trade_date: Optional[date] = None,
-    db: AsyncSession = Depends(get_db),
 ):
-    return await sector_detail(sector_code=sector_code, trade_date=trade_date, db=db)
+    return await sector_detail(sector_code=sector_code, trade_date=trade_date)
 
 
 @router.get("/a-strategy/manual-inputs", response_model=list[AStrategyManualInputOut])
@@ -1959,33 +1623,53 @@ async def delete_a_strategy_manual_input(
 
 async def _run_backtest_task(run_id: int) -> None:
     from app.services.backtest_context import clear_backtest_context, set_backtest_sector_codes
+    from app.services.backtest_store import get_run, flush_run
 
-    async with AsyncSessionLocal() as session:
-        run = await session.get(BacktestRun, run_id)
+    run = get_run(run_id)
+    if not run:
+        return
+    try:
+        if run.strategy_id == "main_line_rotation":
+            codes = list((run.params or {}).get("sector_codes") or [])
+            set_backtest_sector_codes(codes)
+        scoring_mode = (run.params or {}).get("scoring_mode")
+        engine = BacktestEngine(scoring_mode=scoring_mode)
+        await engine.run(run)
+    except Exception:
+        run.status = "failed"
+        flush_run(run)
+    finally:
+        clear_backtest_context()
+
+
+def _spawn_async_task(
+    task_func: Callable[[int], Awaitable[None]],
+    run_id: int,
+    *,
+    task_name: str,
+) -> None:
+    """Run heavy async backtest task in a dedicated thread.
+
+    FastAPI BackgroundTasks may delay response completion when the task is
+    CPU/IO heavy. Spawning a dedicated thread lets create APIs return run_id
+    immediately, so frontend polling can start in real-time.
+    """
+
+    def _runner() -> None:
         try:
-            if run and run.strategy_id == "main_line_rotation":
-                codes = list((run.params or {}).get("sector_codes") or [])
-                set_backtest_sector_codes(codes)
-            scoring_mode = None
-            if run:
-                scoring_mode = (run.params or {}).get("scoring_mode")
-            engine = BacktestEngine(session, scoring_mode=scoring_mode)
-            await engine.run(run_id)
-            await session.commit()
+            asyncio.run(task_func(run_id))
         except Exception:
-            await session.rollback()
-            async with AsyncSessionLocal() as s2:
-                run_fail = await s2.get(BacktestRun, run_id)
-                if run_fail:
-                    run_fail.status = "failed"
-                    await s2.commit()
-        finally:
-            clear_backtest_context()
+            logger.exception("[%s] 线程任务异常 run_id=%s", task_name, run_id)
+
+    threading.Thread(
+        target=_runner,
+        name=f"{task_name}-{run_id}",
+        daemon=True,
+    ).start()
 
 
 @router.get("/backtest/sector-candidates", response_model=BacktestSectorCandidatesOut)
 async def backtest_sector_candidates():
-    """回测可选板块：来自最近一次扫盘评分结果。"""
     snap = _resolve_dashboard_snapshot()
     if not snap or not snap.scores:
         raise HTTPException(
@@ -2027,9 +1711,9 @@ async def backtest_sector_candidates():
 @router.post("/backtest/runs", response_model=BacktestRunOut)
 async def create_backtest(
     body: BacktestCreate,
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
 ):
+    from app.services.backtest_store import create_run
+
     start_date, end_date = clamp_backtest_range(body.start_date, body.end_date)
     params = dict(body.params or {})
     params.setdefault("scoring_mode", settings.effective_scoring_mode())
@@ -2050,44 +1734,38 @@ async def create_backtest(
         params=params,
         status="pending",
     )
-    db.add(run)
-    await db.flush()
-    await db.refresh(run)
-    background_tasks.add_task(_run_backtest_task, run.id)
+    run = create_run(run)
+    _spawn_async_task(_run_backtest_task, run.id, task_name="backtest")
     return BacktestRunOut.model_validate(run)
 
 
 @router.get("/backtest/runs", response_model=list[BacktestRunOut])
-async def list_backtest_runs(db: AsyncSession = Depends(get_db)):
-    rows = (
-        await db.execute(select(BacktestRun).order_by(desc(BacktestRun.id)).limit(20))
-    ).scalars().all()
+async def list_backtest_runs():
+    from app.services.backtest_store import list_runs
+
+    rows = list_runs()
     return [BacktestRunOut.model_validate(r) for r in rows]
 
 
 @router.get("/backtest/runs/{run_id}", response_model=BacktestRunOut)
-async def get_backtest_run(run_id: int, db: AsyncSession = Depends(get_db)):
-    run = await db.get(BacktestRun, run_id)
+async def get_backtest_run(run_id: int):
+    from app.services.backtest_store import get_run
+
+    run = get_run(run_id)
     if not run:
         raise HTTPException(404, "Run not found")
     return BacktestRunOut.model_validate(run)
 
 
 @router.get("/backtest/runs/{run_id}/report", response_model=BacktestReport)
-async def backtest_report(run_id: int, db: AsyncSession = Depends(get_db)):
-    run = await db.get(BacktestRun, run_id)
+async def backtest_report(run_id: int):
+    from app.services.backtest_store import get_equity, get_metrics, get_run
+
+    run = get_run(run_id)
     if not run:
         raise HTTPException(404, "Run not found")
-    metrics = (
-        await db.execute(select(BacktestMetric).where(BacktestMetric.run_id == run_id))
-    ).scalars().first()
-    equity = (
-        await db.execute(
-            select(BacktestEquityDaily)
-            .where(BacktestEquityDaily.run_id == run_id)
-            .order_by(BacktestEquityDaily.trade_date)
-        )
-    ).scalars().all()
+    metrics = get_metrics(run_id)
+    equity = get_equity(run_id)
 
     params = run.params or {}
     initial_capital = float(params.get("initial_capital") or 0)
@@ -2152,31 +1830,26 @@ async def backtest_trades(
     run_id: int,
     offset: int = Query(0, ge=0),
     limit: int = Query(200, ge=1, le=500),
-    db: AsyncSession = Depends(get_db),
 ):
-    rows = (
-        await db.execute(
-            select(BacktestTrade)
-            .where(BacktestTrade.run_id == run_id)
-            .order_by(BacktestTrade.id)
-            .offset(offset)
-            .limit(limit)
-        )
-    ).scalars().all()
+    from app.services.backtest_store import get_trades
+
+    rows = get_trades(run_id, offset=offset, limit=limit)
     return [trade_to_out(r) for r in rows]
 
 
 @router.delete("/backtest/runs/{run_id}")
-async def delete_backtest(run_id: int, db: AsyncSession = Depends(get_db)):
-    run = await db.get(BacktestRun, run_id)
+async def delete_backtest(run_id: int):
+    from app.services.backtest_store import delete_run, get_run
+
+    run = get_run(run_id)
     if not run:
         raise HTTPException(404, "Run not found")
-    await db.delete(run)
+    delete_run(run_id)
     return {"deleted": run_id}
 
 
 # ---------------------------------------------------------------------------
-# A策略严格回测 (独立路由组，与上方 /backtest/* 共用 DB 表)
+# A策略严格回测 (独立路由组)
 # ---------------------------------------------------------------------------
 
 _A_BT_STRATEGY_ID = "a_strategy_strict"
@@ -2185,43 +1858,38 @@ _A_BT_STRATEGY_ID = "a_strategy_strict"
 async def _run_a_strategy_backtest_task(run_id: int) -> None:
     from app.services.backtest_context import clear_backtest_context, set_backtest_sector_codes
     from app.services.a_strategy_backtest_engine import AStrategyBacktestEngine
+    from app.services.backtest_store import get_run, flush_run
+    from app.services.scan_context import clear_scan_context
 
     logger.info("[A策略回测] 后台任务启动 run_id=%s", run_id)
-    async with AsyncSessionLocal() as session:
-        run = await session.get(BacktestRun, run_id)
-        try:
-            if run:
-                codes = list((run.params or {}).get("sector_codes") or [])
-                set_backtest_sector_codes(codes)
-                logger.info(
-                    "[A策略回测] run_id=%s 板块数=%d 区间=%s~%s",
-                    run_id,
-                    len(codes),
-                    run.start_date,
-                    run.end_date,
-                )
-            engine = AStrategyBacktestEngine(session)
-            await engine.run(run_id)
-            await session.commit()
-            logger.info("[A策略回测] 后台任务完成 run_id=%s", run_id)
-        except Exception:
-            logger.exception("[A策略回测] 后台任务异常 run_id=%s", run_id)
-            await session.rollback()
-            async with AsyncSessionLocal() as s2:
-                run_fail = await s2.get(BacktestRun, run_id)
-                if run_fail:
-                    run_fail.status = "failed"
-                    await s2.commit()
-        finally:
-            clear_backtest_context()
+    run = get_run(run_id)
+    if not run:
+        return
+    try:
+        codes = list((run.params or {}).get("sector_codes") or [])
+        set_backtest_sector_codes(codes)
+        logger.info(
+            "[A策略回测] run_id=%s 板块数=%d 区间=%s~%s",
+            run_id, len(codes), run.start_date, run.end_date,
+        )
+        engine = AStrategyBacktestEngine()
+        await engine.run(run)
+        logger.info("[A策略回测] 后台任务完成 run_id=%s", run_id)
+    except Exception:
+        logger.exception("[A策略回测] 后台任务异常 run_id=%s", run_id)
+        run.status = "failed"
+        flush_run(run)
+    finally:
+        clear_backtest_context()
+        clear_scan_context()
 
 
 @router.post("/a-strategy-backtest/runs", response_model=BacktestRunOut)
 async def create_a_strategy_backtest(
     body: BacktestCreate,
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
 ):
+    from app.services.backtest_store import create_run
+
     start_date, end_date = clamp_backtest_range(body.start_date, body.end_date)
     params = dict(body.params or {})
     codes = params.get("sector_codes") or []
@@ -2237,56 +1905,42 @@ async def create_a_strategy_backtest(
     )
     logger.info(
         "[A策略回测] 创建任务 请求区间=%s~%s 校准区间=%s~%s 板块数=%d 初始资金=%s",
-        body.start_date,
-        body.end_date,
-        start_date,
-        end_date,
-        len(codes),
-        params.get("initial_capital"),
+        body.start_date, body.end_date,
+        start_date, end_date,
+        len(codes), params.get("initial_capital"),
     )
-    db.add(run)
-    await db.flush()
-    await db.refresh(run)
-    background_tasks.add_task(_run_a_strategy_backtest_task, run.id)
+    run = create_run(run)
+    _spawn_async_task(_run_a_strategy_backtest_task, run.id, task_name="a-strategy-backtest")
     return BacktestRunOut.model_validate(run)
 
 
 @router.get("/a-strategy-backtest/runs", response_model=list[BacktestRunOut])
-async def list_a_strategy_backtest_runs(db: AsyncSession = Depends(get_db)):
-    rows = (
-        await db.execute(
-            select(BacktestRun)
-            .where(BacktestRun.strategy_id == _A_BT_STRATEGY_ID)
-            .order_by(desc(BacktestRun.id))
-            .limit(20)
-        )
-    ).scalars().all()
+async def list_a_strategy_backtest_runs():
+    from app.services.backtest_store import list_runs
+
+    rows = list_runs(strategy_id=_A_BT_STRATEGY_ID)
     return [BacktestRunOut.model_validate(r) for r in rows]
 
 
 @router.get("/a-strategy-backtest/runs/{run_id}", response_model=BacktestRunOut)
-async def get_a_strategy_backtest_run(run_id: int, db: AsyncSession = Depends(get_db)):
-    run = await db.get(BacktestRun, run_id)
+async def get_a_strategy_backtest_run(run_id: int):
+    from app.services.backtest_store import get_run
+
+    run = get_run(run_id)
     if not run:
         raise HTTPException(404, "Run not found")
     return BacktestRunOut.model_validate(run)
 
 
 @router.get("/a-strategy-backtest/runs/{run_id}/report", response_model=BacktestReport)
-async def a_strategy_backtest_report(run_id: int, db: AsyncSession = Depends(get_db)):
-    run = await db.get(BacktestRun, run_id)
+async def a_strategy_backtest_report(run_id: int):
+    from app.services.backtest_store import get_equity, get_metrics, get_run
+
+    run = get_run(run_id)
     if not run:
         raise HTTPException(404, "Run not found")
-    metrics = (
-        await db.execute(select(BacktestMetric).where(BacktestMetric.run_id == run_id))
-    ).scalars().first()
-    equity = (
-        await db.execute(
-            select(BacktestEquityDaily)
-            .where(BacktestEquityDaily.run_id == run_id)
-            .order_by(BacktestEquityDaily.trade_date)
-        )
-    ).scalars().all()
+    metrics = get_metrics(run_id)
+    equity = get_equity(run_id)
 
     params = run.params or {}
     initial_capital = float(params.get("initial_capital") or 1_000_000)
@@ -2353,24 +2007,156 @@ async def a_strategy_backtest_trades(
     run_id: int,
     offset: int = Query(0, ge=0),
     limit: int = Query(200, ge=1, le=500),
-    db: AsyncSession = Depends(get_db),
 ):
-    rows = (
-        await db.execute(
-            select(BacktestTrade)
-            .where(BacktestTrade.run_id == run_id)
-            .order_by(BacktestTrade.id)
-            .offset(offset)
-            .limit(limit)
-        )
-    ).scalars().all()
+    from app.services.backtest_store import get_trades
+
+    rows = get_trades(run_id, offset=offset, limit=limit)
     return [trade_to_out(r) for r in rows]
 
 
-@router.delete("/a-strategy-backtest/runs/{run_id}")
-async def delete_a_strategy_backtest(run_id: int, db: AsyncSession = Depends(get_db)):
-    run = await db.get(BacktestRun, run_id)
+@router.get(
+    "/a-strategy-backtest/runs/{run_id}/near-miss",
+    response_model=NearMissListOut,
+)
+async def a_strategy_backtest_near_miss(run_id: int):
+    """返回某次A策略回测逐日规则明细列表。"""
+    from app.services.backtest_store import get_equity, get_near_miss, get_run
+
+    run = get_run(run_id)
     if not run:
         raise HTTPException(404, "Run not found")
-    await db.delete(run)
+    raw_items = get_near_miss(run_id)
+    if not raw_items:
+        # 兼容旧回测任务：旧数据未写入 near_miss/rules 快照，这里按每日生成占位明细，
+        # 让前端始终有“每日规则列表”可展示，避免空白。
+        codes = list((run.params or {}).get("sector_codes") or [])
+        if not codes:
+            codes = ["(未选择板块)"]
+        equity_days = [e.trade_date for e in get_equity(run_id)]
+        default_rules = [
+            {
+                "key": "trend_ma20_up",
+                "label": "趋势条件（站上MA20且MA20向上）",
+                "passed": False,
+                "threshold": "close > MA20 and MA20 > MA20_prev",
+                "current": None,
+                "source": "auto",
+            },
+            {
+                "key": "pct_20d_tier",
+                "label": "20日涨幅分级",
+                "passed": False,
+                "threshold": ">=10%（>=18%为顶级主线）",
+                "current": None,
+                "source": "auto",
+            },
+            {
+                "key": "volume_heat",
+                "label": "量能持续性",
+                "passed": False,
+                "threshold": "vol_ratio_5d>=1.6 and share8d>=4.5%",
+                "current": None,
+                "source": "auto",
+            },
+            {
+                "key": "capital_inflow",
+                "label": "资金连续流入",
+                "passed": False,
+                "threshold": "主力连续6日净流入 and 北向5日净流入>=2亿",
+                "current": None,
+                "source": "auto",
+            },
+            {
+                "key": "money_effect",
+                "label": "板块赚钱效应",
+                "passed": False,
+                "threshold": "up_ratio>=65%, max连板>=3, 涨停>=5",
+                "current": None,
+                "source": "auto",
+            },
+            {
+                "key": "no_negative_news",
+                "label": "竞价与基本面无压制",
+                "passed": False,
+                "threshold": "竞价门槛通过且无监管利空/集体减持/政策降温",
+                "current": None,
+                "source": "manual",
+            },
+        ]
+        for td in equity_days:
+            for code in codes:
+                raw_items.append(
+                    {
+                        "trade_date": td.isoformat(),
+                        "sector_code": code,
+                        "sector_name": code,
+                        "pass_count": 0,
+                        "total_rules": 6,
+                        "all_passed": False,
+                        "rules": list(default_rules),
+                        "passed_rule_labels": [],
+                        "rule_fail_reasons": ["旧任务未保存逐日规则快照，建议重跑以获取真实规则明细"],
+                        "stage": "dormant",
+                        "total_score": 0.0,
+                        "is_main_line": False,
+                        "main_line_tier": "rotation",
+                    }
+                )
+    items: list[NearMissItemOut] = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        rules_raw = item.get("rules") or []
+        rules_out = [
+            NearMissRuleOut(
+                key=str(r.get("key", "")),
+                label=str(r.get("label", "")),
+                passed=bool(r.get("passed", False)),
+                threshold=r.get("threshold"),
+                current=r.get("current"),
+                source=str(r.get("source", "auto")),
+            )
+            for r in rules_raw
+            if isinstance(r, dict)
+        ]
+        td_str = item.get("trade_date")
+        try:
+            td_val = date.fromisoformat(str(td_str)[:10]) if td_str else run.start_date
+        except (ValueError, TypeError):
+            td_val = run.start_date
+        items.append(NearMissItemOut(
+            trade_date=td_val,
+            sector_code=str(item.get("sector_code", "")),
+            sector_name=str(item.get("sector_name", "")),
+            pass_count=int(item.get("pass_count", 0)),
+            total_rules=int(item.get("total_rules", 6)),
+            all_passed=bool(item.get("all_passed", False)),
+            rules=rules_out,
+            passed_rule_labels=[
+                str(x) for x in (item.get("passed_rule_labels") or [])
+                if str(x).strip()
+            ],
+            rule_fail_reasons=item.get("rule_fail_reasons") or [],
+            stage=str(item.get("stage", "dormant")),
+            total_score=float(item.get("total_score", 0)),
+            is_main_line=bool(item.get("is_main_line", False)),
+            main_line_tier=str(item.get("main_line_tier", "rotation")),
+            env_score=item.get("env_score"),
+            can_long=item.get("can_long"),
+            confirm_state=str(item.get("confirm_state", "pending") or "pending"),
+            exit_state=str(item.get("exit_state", "normal") or "normal"),
+        ))
+
+    items.sort(key=lambda x: (x.trade_date, x.sector_code, -x.pass_count))
+    return NearMissListOut(trade_date=run.end_date, items=items)
+
+
+@router.delete("/a-strategy-backtest/runs/{run_id}")
+async def delete_a_strategy_backtest(run_id: int):
+    from app.services.backtest_store import delete_run, get_run
+
+    run = get_run(run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+    delete_run(run_id)
     return {"deleted": run_id}

@@ -280,6 +280,40 @@ class AStrategyListOut(BaseModel):
     sectors: list[SectorScoreOut] = Field(default_factory=list)
 
 
+class NearMissRuleOut(BaseModel):
+    key: str = ""
+    label: str = ""
+    passed: bool = False
+    threshold: Optional[str] = None
+    current: Optional[Any] = None
+    source: str = "auto"
+
+
+class NearMissItemOut(BaseModel):
+    trade_date: date
+    sector_code: str
+    sector_name: str
+    pass_count: int
+    total_rules: int = 6
+    all_passed: bool = False
+    rules: list[NearMissRuleOut] = Field(default_factory=list)
+    passed_rule_labels: list[str] = Field(default_factory=list)
+    rule_fail_reasons: list[str] = Field(default_factory=list)
+    stage: str = "dormant"
+    total_score: float = 0.0
+    is_main_line: bool = False
+    main_line_tier: str = "rotation"
+    env_score: Optional[float] = None
+    can_long: Optional[bool] = None
+    confirm_state: str = "pending"
+    exit_state: str = "normal"
+
+
+class NearMissListOut(BaseModel):
+    trade_date: Optional[date] = None
+    items: list[NearMissItemOut] = Field(default_factory=list)
+
+
 class BacktestSectorCandidatesOut(BaseModel):
     trade_date: Optional[date] = None
     sectors: list[BacktestSectorCandidateOut] = Field(default_factory=list)

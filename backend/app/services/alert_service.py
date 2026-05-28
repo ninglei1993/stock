@@ -1,7 +1,6 @@
 from datetime import date
 from typing import Optional
 
-from app.models.tables import SectorScoreDaily
 from app.services.theme_engine import ScoreResult
 
 

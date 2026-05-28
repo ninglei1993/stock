@@ -43,9 +43,6 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    database_url: str = "postgresql+asyncpg://themeradar:themeradar@localhost:5432/themeradar"
-    database_url_sync: str = "postgresql://themeradar:themeradar@localhost:5432/themeradar"
-    redis_url: str = "redis://localhost:6379/0"
     # 0=全部概念（耗聚宽日配额极大）；免费账号建议 30~80
     ingest_max_concepts: int = 50
     # 仅入库名称包含该关键词的概念（如 CPO）；留空表示按 ingest_max_concepts 取列表前 N 个
@@ -62,7 +59,6 @@ class Settings(BaseSettings):
     # Tushare 单次请求超时（秒）
     tushare_timeout_seconds: int = 120
     tushare_rate_limit: float = 170.0
-    # True=收盘扫描不落库 PostgreSQL（仅内存快照供仪表盘）；重启/多 worker 不适用
     scan_volatile_storage: bool = False
     # 本地数据目录：全市场行情 JSON + scan/latest.json
     data_dir: Path = _PROJECT_ROOT / "data"

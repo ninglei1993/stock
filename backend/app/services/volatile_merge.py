@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
-
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional
 
 from app.models.tables import MarketEnvDaily
 
@@ -28,8 +27,7 @@ def _volatile_rows_in_range(buf, attr: str, lookback_start: date, trade_date: da
     return []
 
 
-async def merge_sector_daily(
-    session: AsyncSession,
+def merge_sector_daily(
     lookback_start: date,
     trade_date: date,
 ) -> list:
@@ -41,8 +39,7 @@ async def merge_sector_daily(
     return []
 
 
-async def merge_sector_flow(
-    session: AsyncSession,
+def merge_sector_flow(
     lookback_start: date,
     trade_date: date,
 ) -> list:
@@ -54,7 +51,7 @@ async def merge_sector_flow(
     return []
 
 
-async def merge_leaders(session: AsyncSession, trade_date: date) -> list:
+def merge_leaders(trade_date: date) -> list:
     from app.services.volatile_scan import get_today_buffer
 
     buf = get_today_buffer()
@@ -63,12 +60,12 @@ async def merge_leaders(session: AsyncSession, trade_date: date) -> list:
     return []
 
 
-async def get_market_env_merged(session: AsyncSession, trade_date: date):
-    """从 volatile 缓冲区读取市场环境，回退到 DB。"""
+def get_market_env_merged(trade_date: date) -> Optional[MarketEnvDaily]:
+    """从 volatile 缓冲区读取市场环境。"""
     from app.services.volatile_scan import get_today_buffer
 
     buf = get_today_buffer()
     if buf and buf.market_env is not None:
         if getattr(buf.market_env, "trade_date", None) == trade_date:
             return buf.market_env
-    return await session.get(MarketEnvDaily, trade_date)
+    return None

@@ -1,8 +1,6 @@
 from datetime import date, timedelta
 from typing import Callable, Optional
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.adapters.factory import get_adapter
 from app.config import settings
 from app.services.storage_mode import uses_scan_memory_buffer
@@ -35,8 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 class IngestionService:
-    def __init__(self, session: AsyncSession):
-        self.session = session
+    def __init__(self):
         self.adapter = get_adapter()
         self.aggregator = SectorAggregator(self.adapter)
 

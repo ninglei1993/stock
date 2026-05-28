@@ -1,20 +1,4 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: themeradar
-      POSTGRES_PASSWORD: themeradar
-      POSTGRES_DB: themeradar
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U themeradar"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   api:
     build: ./backend
     ports:
@@ -22,8 +6,6 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://themeradar:themeradar@postgres:5432/themeradar
-      DATABASE_URL_SYNC: postgresql://themeradar:themeradar@postgres:5432/themeradar
       DATA_SOURCE: ${DATA_SOURCE:-auto}
       JQDATA_USERNAME: ${JQDATA_USERNAME:-}
       JQDATA_PASSWORD: ${JQDATA_PASSWORD:-}
@@ -33,14 +15,10 @@ services:
       INGEST_MAX_CONCEPTS: ${INGEST_MAX_CONCEPTS:-50}
       INGEST_CONCEPT_FILTER: ${INGEST_CONCEPT_FILTER:-}
       INGEST_MAX_STOCKS_PER_CONCEPT: ${INGEST_MAX_STOCKS_PER_CONCEPT:-0}
-      SCAN_VOLATILE_STORAGE: ${SCAN_VOLATILE_STORAGE:-false}
       DATA_DIR: /data
       MARKET_CACHE_ENABLED: ${MARKET_CACHE_ENABLED:-true}
       JQDATA_DATA_START: ${JQDATA_DATA_START:-2025-02-06}
       JQDATA_DATA_END: ${JQDATA_DATA_END:-2026-02-13}
-    depends_on:
-      postgres:
-        condition: service_healthy
     healthcheck:
       test:
         [
@@ -62,6 +40,3 @@ services:
     depends_on:
       api:
         condition: service_healthy
-
-volumes:
-  pgdata:

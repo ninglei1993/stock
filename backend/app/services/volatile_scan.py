@@ -52,8 +52,9 @@ class VolatileDashboardSnapshot:
     sector_dailies: dict[str, dict] = field(default_factory=dict)
     sector_flows: dict[str, dict] = field(default_factory=dict)
     # 成分股快照：sector_code -> list[StockDaily-like dict]
-    # 用于在 VolatileTodayBuffer 被清空（如重启）后仍能回填详情页
     stocks_by_sector: dict[str, list[Any]] = field(default_factory=dict)
+    # 接近达标板块（满足4+条件但未满足全部6条），按 (trade_date, sector_code) 记录
+    near_miss: list[dict[str, Any]] = field(default_factory=list)
 
 
 _lock = threading.Lock()

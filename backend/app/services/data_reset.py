@@ -1,21 +1,8 @@
-"""清空缓存、内存快照与扫描入库数据（含历史演示残留）。"""
+"""清空缓存、内存快照与扫描数据。"""
 
 from __future__ import annotations
 
 import logging
-
-from sqlalchemy import delete
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.models.tables import (
-    Alert,
-    MarketEnvDaily,
-    SectorDaily,
-    SectorFlowDaily,
-    SectorScoreDaily,
-    StockDaily,
-    ThemeLeaderDaily,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -49,22 +36,3 @@ def clear_runtime_caches() -> None:
     clear_volatile_snapshots()
     clear_file_scan_storage()
     logger.info("[系统] 已清空运行时缓存与内存快照")
-
-
-async def clear_scan_database(session: AsyncSession) -> dict[str, int]:
-    """删除扫描产生的业务表数据（保留回测表）。"""
-    counts: dict[str, int] = {}
-    for model, key in (
-        (Alert, "alerts"),
-        (SectorScoreDaily, "sector_scores"),
-        (ThemeLeaderDaily, "leaders"),
-        (StockDaily, "stocks"),
-        (SectorFlowDaily, "flows"),
-        (SectorDaily, "sectors"),
-        (MarketEnvDaily, "market_env"),
-    ):
-        result = await session.execute(delete(model))
-        counts[key] = result.rowcount or 0
-    await session.commit()
-    logger.info("[系统] 已清空数据库扫描数据: %s", counts)
-    return counts

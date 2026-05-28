@@ -9,9 +9,278 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { api, BacktestRun, BacktestReport, BacktestTrade } from "../api";
+import { api, BacktestRun, BacktestReport, BacktestTrade, NearMissItem } from "../api";
 import BacktestSectorPicker from "../components/BacktestSectorPicker";
-import { pctClass, RUN_STATUS_LABEL } from "../utils";
+import { pctClass } from "../utils";
+
+function NearMissSection({ runId }: { runId: number | null }) {
+  const [items, setItems] = useState<NearMissItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!runId) {
+      setItems([]);
+      return;
+    }
+    setLoading(true);
+    api.aStrategyBacktestNearMiss(runId)
+      .then((res) => setItems(res.items || []))
+      .catch(() => setItems([]))
+      .finally(() => setLoading(false));
+  }, [runId]);
+
+  if (loading) {
+    return (
+      <div className="card-glass" style={{ marginTop: "1.5rem" }}>
+        <p style={{ color: "var(--muted)", padding: "0.5rem" }}>加载每日回测数据…</p>
+      </div>
+    );
+  }
+  if (items.length === 0) return null;
+
+  const STAGE_LABEL: Record<string, string> = {
+    dormant: "沉寂",
+    sprout: "萌芽",
+    ferment: "发酵",
+    climax: "高潮",
+    decay: "衰退",
+  };
+  const STAGE_COLOR: Record<string, string> = {
+    dormant: "#64748b",
+    sprout: "#fbbf24",
+    ferment: "#34d399",
+    climax: "#f87171",
+    decay: "#94a3b8",
+  };
+
+  return (
+    <div className="card-glass" style={{ marginTop: "1.5rem" }}>
+      <h3 style={{ marginBottom: "0.75rem" }}>
+        每日条件命中明细
+        <span style={{ fontSize: "0.78rem", color: "var(--muted)", marginLeft: "0.5rem" }}>
+          每条数据直接展示规则按钮（通过/未通过一目了然）
+        </span>
+      </h3>
+      <table className="sectors-table">
+        <thead>
+          <tr>
+            <th>日期</th>
+            <th>板块</th>
+            <th>通过条件</th>
+            <th>规则按钮</th>
+            <th>阶段</th>
+            <th>环境分</th>
+            <th>未通过原因</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => {
+            const rowKey = `${item.trade_date}:${item.sector_code}`;
+            const isExpanded = expandedKey === rowKey;
+            return (
+              <>
+                <tr key={rowKey}>
+                  <td>{item.trade_date}</td>
+                  <td style={{ fontWeight: 600 }}>{item.sector_name}</td>
+                  <td>
+                    <span
+                      style={{
+                        display: "inline-block",
+                        padding: "2px 8px",
+                        borderRadius: "4px",
+                        fontSize: "0.82rem",
+                        fontWeight: 600,
+                        background: item.all_passed
+                          ? "rgba(16, 185, 129, 0.15)"
+                          : "rgba(251, 191, 36, 0.15)",
+                        color: item.all_passed ? "#34d399" : "#fbbf24",
+                      }}
+                    >
+                      {item.pass_count}/{item.total_rules}
+                    </span>
+                  </td>
+                  <td>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+                      {item.rules.map((r) => (
+                        <button
+                          key={`${rowKey}:${r.key}`}
+                          type="button"
+                          disabled
+                          title={r.threshold || "无阈值"}
+                          style={{
+                            border: "none",
+                            borderRadius: "999px",
+                            padding: "3px 8px",
+                            fontSize: "0.74rem",
+                            cursor: "default",
+                            color: r.passed ? "#34d399" : "#f87171",
+                            background: r.passed
+                              ? "rgba(16, 185, 129, 0.12)"
+                              : "rgba(248, 113, 113, 0.12)",
+                          }}
+                        >
+                          {(r.label || r.key) || "规则"} · {r.passed ? "通过" : "未通过"}
+                        </button>
+                      ))}
+                    </div>
+                  </td>
+                  <td style={{ color: STAGE_COLOR[item.stage] || "#94a3b8", fontWeight: 600 }}>
+                    {STAGE_LABEL[item.stage] || item.stage}
+                  </td>
+                  <td>
+                    {item.env_score != null ? (
+                      <span
+                        style={{
+                          fontWeight: 600,
+                          color: item.env_score >= 60 ? "#34d399" : item.env_score >= 40 ? "#fbbf24" : "#f87171",
+                        }}
+                      >
+                        {item.env_score}
+                        {item.can_long === false && (
+                          <span style={{ fontSize: "0.7rem", color: "#f87171", marginLeft: 4 }}>禁多</span>
+                        )}
+                      </span>
+                    ) : "—"}
+                  </td>
+                  <td style={{ fontSize: "0.78rem", color: "var(--muted)" }}>
+                    {item.rule_fail_reasons?.length ? item.rule_fail_reasons.join("、") : "—"}
+                  </td>
+                  <td>
+                    <button
+                      className="btn btn-ghost"
+                      type="button"
+                      style={{ fontSize: "0.75rem", padding: "4px 10px" }}
+                      onClick={() => setExpandedKey(isExpanded ? null : rowKey)}
+                    >
+                      {isExpanded ? "收起" : "详情"}
+                    </button>
+                  </td>
+                </tr>
+                {isExpanded && (
+                  <tr key={`${rowKey}-detail`}>
+                    <td colSpan={8} style={{ padding: 0 }}>
+                      <div
+                        style={{
+                          padding: "0.75rem 1rem",
+                          background: "rgba(30, 41, 59, 0.5)",
+                          borderBottom: "1px solid rgba(148,163,184,0.1)",
+                        }}
+                      >
+                        {/* 汇总指标行 */}
+                        <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap", marginBottom: "0.75rem", fontSize: "0.82rem" }}>
+                          <span style={{ color: "var(--muted)" }}>
+                            阶段：<strong style={{ color: STAGE_COLOR[item.stage] || "#94a3b8" }}>{STAGE_LABEL[item.stage] || item.stage}</strong>
+                          </span>
+                          {item.env_score != null && (
+                            <span style={{ color: "var(--muted)" }}>
+                              环境分：<strong style={{ color: item.env_score >= 60 ? "#34d399" : item.env_score >= 40 ? "#fbbf24" : "#f87171" }}>
+                                {item.env_score}
+                              </strong>
+                              {item.can_long === false && <span style={{ color: "#f87171", marginLeft: 4 }}>(禁多)</span>}
+                              {item.can_long === true && <span style={{ color: "#34d399", marginLeft: 4 }}>(可做多)</span>}
+                            </span>
+                          )}
+                          {item.confirm_state && item.confirm_state !== "pending" && (
+                            <span style={{ color: "#34d399" }}>确认状态：{item.confirm_state}</span>
+                          )}
+                          {item.exit_state && item.exit_state !== "normal" && (
+                            <span style={{ color: "#f87171" }}>退出信号：已触发</span>
+                          )}
+                        </div>
+                        {/* 规则详情表 */}
+                        <table
+                          style={{
+                            width: "100%",
+                            fontSize: "0.82rem",
+                            borderCollapse: "collapse",
+                          }}
+                        >
+                          <thead>
+                            <tr style={{ color: "var(--muted)" }}>
+                              <th style={{ textAlign: "left", padding: "4px 8px" }}>条件</th>
+                              <th style={{ textAlign: "center", padding: "4px 8px" }}>结果</th>
+                              <th style={{ textAlign: "left", padding: "4px 8px" }}>阈值</th>
+                              <th style={{ textAlign: "left", padding: "4px 8px" }}>当前值</th>
+                              <th style={{ textAlign: "left", padding: "4px 8px" }}>来源</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {item.rules.map((r) => (
+                              <tr
+                                key={`${rowKey}-detail-${r.key}`}
+                                style={{ borderBottom: "1px solid rgba(148,163,184,0.06)" }}
+                              >
+                                <td style={{ padding: "4px 8px" }}>{r.label || r.key || "规则"}</td>
+                                <td
+                                  style={{
+                                    textAlign: "center",
+                                    padding: "4px 8px",
+                                    color: r.passed ? "#34d399" : "#f87171",
+                                    fontWeight: 600,
+                                  }}
+                                >
+                                  {r.passed ? "通过" : "未通过"}
+                                </td>
+                                <td style={{ padding: "4px 8px", color: "var(--muted)", fontSize: "0.78rem" }}>
+                                  {r.threshold || "—"}
+                                </td>
+                                <td
+                                  style={{
+                                    padding: "4px 8px",
+                                    color: "var(--muted)",
+                                    fontSize: "0.78rem",
+                                    fontFamily: "JetBrains Mono, monospace",
+                                    wordBreak: "break-all",
+                                  }}
+                                >
+                                  {r.current == null
+                                    ? "—"
+                                    : typeof r.current === "object"
+                                      ? (() => {
+                                          const obj = r.current as Record<string, unknown>;
+                                          return (
+                                            <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px" }}>
+                                              {Object.entries(obj).map(([k, v]) => {
+                                                if (k.endsWith("debug") || k.endsWith("_tail") || k.endsWith("_last6")) return null;
+                                                const display = v == null ? "—"
+                                                  : typeof v === "number" ? (v > 1000 ? v.toFixed(0) : Number(v.toFixed(4)).toString())
+                                                  : typeof v === "boolean" ? (v ? "是" : "否")
+                                                  : Array.isArray(v) ? `[${v.length}项]`
+                                                  : typeof v === "object" ? JSON.stringify(v)
+                                                  : String(v);
+                                                return (
+                                                  <span key={k}>
+                                                    <span style={{ color: "var(--muted)" }}>{k}:</span>{" "}
+                                                    <span style={{ color: "#e2e8f0" }}>{display}</span>
+                                                  </span>
+                                                );
+                                              })}
+                                            </div>
+                                          );
+                                        })()
+                                      : String(r.current)}
+                                </td>
+                                <td style={{ padding: "4px 8px", color: "var(--muted)", fontSize: "0.78rem" }}>
+                                  {r.source === "manual" ? "手动" : "自动"}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 const DEFAULT_CAPITAL = 1_000_000;
 
@@ -31,13 +300,11 @@ export default function AStrategyBacktest() {
   const [activeRun, setActiveRun] = useState<BacktestRun | null>(null);
   const [report, setReport] = useState<BacktestReport | null>(null);
   const [trades, setTrades] = useState<BacktestTrade[]>([]);
-  const [runs, setRuns] = useState<BacktestRun[]>([]);
   const [error, setError] = useState("");
 
   const pollRef = useRef<ReturnType<typeof setTimeout>>();
 
   useEffect(() => {
-    api.listAStrategyBacktests().then(setRuns).catch(console.error);
     api.systemStatus().then((s) => {
       if (s.default_scan_start) setStartDate(s.default_scan_start);
       if (s.default_scan_end) setEndDate(s.default_scan_end);
@@ -64,12 +331,10 @@ export default function AStrategyBacktest() {
           ]);
           setReport(r);
           setTrades(t);
-          api.listAStrategyBacktests().then(setRuns).catch(console.error);
           return;
         }
         if (run.status === "failed") {
           setError(run.error_message || "回测失败");
-          api.listAStrategyBacktests().then(setRuns).catch(console.error);
           return;
         }
         pollRef.current = setTimeout(tick, 3000);
@@ -109,38 +374,27 @@ export default function AStrategyBacktest() {
     }
   };
 
-  const viewRun = async (runId: number) => {
-    setError("");
-    setReport(null);
-    setTrades([]);
-    setActiveRunId(runId);
-    try {
-      const run = await api.getAStrategyBacktest(runId);
-      setActiveRun(run);
-      if (run.status === "done") {
-        const [r, t] = await Promise.all([
-          api.aStrategyBacktestReport(runId),
-          api.aStrategyBacktestTrades(runId),
-        ]);
-        setReport(r);
-        setTrades(t);
-      } else if (run.status === "running" || run.status === "pending") {
-        pollRun(runId);
-      } else if (run.status === "failed") {
-        setError(run.error_message || "回测失败");
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "加载失败");
-    }
-  };
-
-  const progressPct =
-    activeRun && activeRun.total_days > 0
+  const runStatus = activeRun?.status ?? null;
+  const isRunning = runStatus === "running" || runStatus === "pending";
+  const isCreatingRun = submitting && !activeRun;
+  const showProgress = isCreatingRun || !!activeRun;
+  const progressPct = activeRun
+    ? activeRun.total_days > 0
       ? Math.round((activeRun.progress / activeRun.total_days) * 100)
-      : 0;
-
-  const isRunning =
-    activeRun?.status === "running" || activeRun?.status === "pending";
+      : runStatus === "done"
+        ? 100
+        : 0
+    : isCreatingRun
+      ? 5
+    : 0;
+  const progressTitle =
+    isCreatingRun
+      ? "正在创建回测任务…"
+      : runStatus === "done"
+        ? "回测已完成"
+        : runStatus === "failed"
+          ? "回测失败"
+          : "回测进行中…";
 
   const initialCapitalFromRun = Number(
     (report?.run?.params as { initial_capital?: number } | undefined)?.initial_capital
@@ -217,10 +471,10 @@ export default function AStrategyBacktest() {
       </div>
 
       {/* --- 回测进度 --- */}
-      {isRunning && (
+      {showProgress && (
         <div className="card-glass" style={{ marginBottom: "1.5rem" }}>
           <h3 style={{ fontSize: "1rem", marginBottom: "0.75rem" }}>
-            回测进行中… {progressPct}%
+            {progressTitle} {progressPct}%
           </h3>
           <div
             style={{
@@ -234,14 +488,23 @@ export default function AStrategyBacktest() {
               style={{
                 width: `${progressPct}%`,
                 height: "100%",
-                background: "linear-gradient(90deg, #3b82f6, #60a5fa)",
+                background:
+                  isCreatingRun
+                    ? "linear-gradient(90deg, #6366f1, #818cf8)"
+                    : runStatus === "failed"
+                    ? "linear-gradient(90deg, #ef4444, #f87171)"
+                    : runStatus === "done"
+                      ? "linear-gradient(90deg, #10b981, #34d399)"
+                      : "linear-gradient(90deg, #3b82f6, #60a5fa)",
                 borderRadius: "4px",
                 transition: "width 0.4s ease",
               }}
             />
           </div>
           <p style={{ fontSize: "0.78rem", color: "var(--muted)", marginTop: "0.5rem" }}>
-            已处理 {activeRun?.progress ?? 0} / {activeRun?.total_days ?? "?"} 个交易日
+            {isCreatingRun
+              ? "正在等待后端创建任务并返回 run id…"
+              : `已处理 ${activeRun?.progress ?? 0} / ${activeRun?.total_days ?? "?"} 个交易日（含前21日预热数据）`}
           </p>
         </div>
       )}
@@ -281,6 +544,9 @@ export default function AStrategyBacktest() {
               </div>
             ))}
           </div>
+
+          {/* 每日回测规则明细（放在上半屏，避免被误认为未展示） */}
+          {activeRunId && <NearMissSection runId={activeRunId} />}
 
           {/* 收益曲线 */}
           <div className="card-glass" style={{ height: 320, marginBottom: "1rem" }}>
@@ -368,50 +634,6 @@ export default function AStrategyBacktest() {
         </>
       )}
 
-      {/* --- 历史回测列表 --- */}
-      <div className="card-glass" style={{ marginTop: "1.5rem" }}>
-        <h3 style={{ marginBottom: "0.75rem" }}>历史回测</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>编号</th>
-              <th>区间</th>
-              <th>状态</th>
-              <th>进度</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {runs.map((r) => (
-              <tr key={r.id}>
-                <td>{r.id}</td>
-                <td>
-                  {r.start_date} ~ {r.end_date}
-                </td>
-                <td>{RUN_STATUS_LABEL[r.status] || r.status}</td>
-                <td>{r.total_days ? `${r.progress}/${r.total_days}` : "—"}</td>
-                <td>
-                  <button
-                    className="btn btn-ghost"
-                    style={{ fontSize: "0.8rem" }}
-                    onClick={() => viewRun(r.id)}
-                    disabled={activeRunId === r.id && isRunning}
-                  >
-                    {activeRunId === r.id && isRunning ? "加载中…" : "查看"}
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {runs.length === 0 && (
-              <tr>
-                <td colSpan={5} style={{ color: "var(--muted)", padding: "1rem" }}>
-                  暂无回测记录
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
     </>
   );
 }

@@ -1,6 +1,7 @@
 """主线轮动回测逻辑单元测试。"""
 
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from app.services.backtest_engine import BacktestEngine
 
@@ -47,26 +48,17 @@ def test_pick_rank1_a_strategy_tier_priority():
     assert top.sector_code == "B"
 
 
-def test_save_results_abs_mode_uses_equity_series():
-    import asyncio
-    from unittest.mock import AsyncMock, MagicMock, patch
-
+def test_compute_metrics_abs_mode():
     with patch("app.services.backtest_engine.get_adapter"):
-        engine = BacktestEngine(MagicMock())
-    engine.session = AsyncMock()
-    engine.session.execute = AsyncMock()
+        engine = BacktestEngine()
 
-    async def _run():
-        await engine._save_results(
-            1,
-            [],
-            1_000_000,
-            1.2,
-            initial_capital=1_000_000,
-            equity_series=[1_000_000, 1_200_000, 1_000_000, 1_350_000],
-        )
-
-    asyncio.run(_run())
-    metric = engine.session.add.call_args[0][0]
+    metric = engine._compute_metrics(
+        1,
+        [],
+        1_350_000,
+        1.2,
+        initial_capital=1_000_000,
+        equity_series=[1_000_000, 1_200_000, 1_000_000, 1_350_000],
+    )
     assert metric.total_return == 35.0
     assert metric.max_drawdown == round((1_200_000 - 1_000_000) / 1_200_000 * 100, 2)
