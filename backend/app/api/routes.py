@@ -507,8 +507,13 @@ def _build_data_missing_items(
 
 @router.get("/health")
 async def health():
-    info = adapter_info()
-    return {"status": "ok", "product": "ThemeRadar", **info}
+    # Health endpoint must stay lightweight and avoid triggering
+    # remote adapter initialization (which can block startup checks).
+    return {
+        "status": "ok",
+        "product": "ThemeRadar",
+        "tushare_configured": settings.tushare_configured(),
+    }
 
 
 @router.post("/system/reload-config")

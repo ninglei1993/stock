@@ -81,11 +81,13 @@ def _latest_open_trade_day() -> date:
 def _latest_completed_trade_day() -> date:
     """
     最近一个“已收盘”交易日。
-    规则：按北京时间判断，15:00 前不把当日视作可回测完成日。
+    规则：按北京时间判断，收盘数据存在供应延迟，19:00 前不把当日视作可回测完成日。
     """
     latest = _latest_open_trade_day_cached()
     now_cn = datetime.now(timezone(timedelta(hours=8)))
-    if latest == now_cn.date() and now_cn.time() < time(15, 0):
+    # Tushare/代理链路在收盘后常有延迟，15:00~18:59 仍可能拿不到完整当日数据。
+    # 为避免“扫描成功但板块成分全空”，默认在 19:00 之后才允许使用当日。
+    if latest == now_cn.date() and now_cn.time() < time(19, 0):
         from app.adapters.factory import get_adapter
 
         try:

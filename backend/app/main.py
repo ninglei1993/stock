@@ -5,7 +5,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
-from app.adapters.factory import adapter_info
 from app.config import settings
 from app.database import init_db
 from app.jobs.scheduler import start_scheduler
@@ -44,12 +43,7 @@ async def lifespan(app: FastAPI):
     from app.services.latest_scan_store import LatestScanStore
 
     LatestScanStore.hydrate_dashboard_snapshot()
-    info = adapter_info()
-    logger.info(
-        "Database initialized | adapter=%s | concepts=%s",
-        info.get("adapter"),
-        info.get("universe_total"),
-    )
+    logger.info("Database initialized")
     start_scheduler()
     yield
 
