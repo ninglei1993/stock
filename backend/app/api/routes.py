@@ -413,7 +413,13 @@ async def _latest_trade_date(session: AsyncSession) -> Optional[date]:
         if row_db > completed:
             return completed
         return row_db
-    return row_db or completed
+    if row_db is not None:
+        return row_db
+    # DB 为空时回退到内存快照的交易日
+    snap = _resolve_dashboard_snapshot()
+    if snap and snap.trade_date and snap.trade_date >= date(2020, 1, 1):
+        return snap.trade_date
+    return completed
 
 
 def _normalize_requested_trade_date(trade_date: Optional[date]) -> Optional[date]:
@@ -1419,8 +1425,34 @@ async def list_sectors(
         ).scalars().all()
         leader_map = {l.sector_code: l for l in leaders}
 
-    def _score_out(s: SectorScoreDaily) -> SectorScoreOut:
+    # DB 无数据时回退到内存快照（scan_volatile_storage=true 场景）
+    if not score_map and td:
+        snap = _resolve_dashboard_snapshot()
+        if snap and snap.scores:
+            snap_days = list(snap.scan_trade_days) if snap.scan_trade_days else []
+            if td == snap.trade_date or td in snap_days:
+                score_map = {s.sector_code: s for s in snap.scores}
+                leader_map = {
+                    code: val for code, val in (snap.leader_map or {}).items()
+                }
+                if snap.sector_dailies:
+                    for code, sd in snap.sector_dailies.items():
+                        if hasattr(sd, "pct_change"):
+                            pct_map[code] = sd.pct_change
+                        elif isinstance(sd, dict) and "pct_change" in sd:
+                            pct_map[code] = sd["pct_change"]
+
+    def _score_out(s) -> SectorScoreOut:
         l = leader_map.get(s.sector_code)
+        leader_stock = None
+        leader_streak = None
+        if l is not None:
+            if hasattr(l, "stock_code"):
+                leader_stock = l.stock_code
+                leader_streak = getattr(l, "limit_up_streak", None)
+            elif isinstance(l, dict):
+                leader_stock = l.get("stock_code")
+                leader_streak = l.get("limit_up_streak")
         reasons_raw = getattr(s, "rule_fail_reasons", None)
         if isinstance(reasons_raw, str):
             rule_fail_reasons = [x for x in reasons_raw.split("；") if x]
@@ -1440,8 +1472,8 @@ async def list_sectors(
             leader_score=s.leader_score,
             relative_score=s.relative_score,
             position_hint=s.position_hint,
-            leader_stock=l.stock_code if l else None,
-            leader_streak=l.limit_up_streak if l else None,
+            leader_stock=leader_stock,
+            leader_streak=leader_streak,
             pct_change=pct_map.get(s.sector_code),
             is_filtered=s.is_filtered,
             filter_reason=s.filter_reason,

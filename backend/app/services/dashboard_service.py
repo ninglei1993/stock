@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import date, timedelta
 from typing import Any, Optional
 
@@ -20,6 +21,10 @@ from app.adapters.factory import get_adapter
 from app.services.trade_calendar import latest_completed_trade_day, latest_previous_trade_day
 
 logger = logging.getLogger(__name__)
+
+
+def _ts(t0: float) -> str:
+    return f"{time.monotonic() - t0:.2f}s"
 
 
 # ---------------------------------------------------------------------------
@@ -33,10 +38,18 @@ def resolve_dashboard_trade_date(requested: Optional[date] = None) -> Optional[d
     - 未传日期：取最近已收盘交易日（不依赖扫描入库数据）
     - 传了日期：截断到最近已收盘交易日
     """
+    t0 = time.monotonic()
     if requested is None:
         try:
-            return latest_previous_trade_day()
+            td = latest_previous_trade_day()
+            logger.info(
+                "[仪表盘] 日期解析完成 trade_date=%s 耗时=%s | "
+                "调用链: latest_previous_trade_day() → Tushare trade_cal",
+                td, _ts(t0),
+            )
+            return td
         except Exception:
+            logger.warning("[仪表盘] 日期解析失败 耗时=%s", _ts(t0))
             return None
 
     try:
@@ -44,9 +57,9 @@ def resolve_dashboard_trade_date(requested: Optional[date] = None) -> Optional[d
     except Exception:
         completed = None
 
-    if completed is not None and requested > completed:
-        return completed
-    return requested
+    result = completed if (completed is not None and requested > completed) else requested
+    logger.info("[仪表盘] 日期解析完成 trade_date=%s 耗时=%s", result, _ts(t0))
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -84,22 +97,43 @@ def build_market_overview(anchor: date, limit_up_count_hint: int = 0) -> Optiona
     """
     from app.services.market_cache import MarketTable, get_market_cache
 
+    t_total = time.monotonic()
     store = get_market_cache()
     adapter = None
 
     # --- Load daily bars ---
+    t0 = time.monotonic()
     try:
         df = store.load(MarketTable.DAILY, anchor)
     except Exception:
         df = None
-    if df is None or df.empty:
+    if df is not None and not df.empty:
+        logger.info(
+            "[仪表盘][market_overview] daily 数据来源=本地缓存 date=%s rows=%d 耗时=%s",
+            anchor, len(df), _ts(t0),
+        )
+    else:
+        logger.info(
+            "[仪表盘][market_overview] daily 缓存未命中 date=%s，回退远程拉取",
+            anchor,
+        )
+        t0 = time.monotonic()
         try:
             adapter = get_adapter()
             if hasattr(adapter, "_daily_market"):
                 df = adapter._daily_market(anchor)  # type: ignore[attr-defined]
+                logger.info(
+                    "[仪表盘][market_overview] daily 数据来源=Tushare daily 接口 date=%s rows=%s 耗时=%s",
+                    anchor, len(df) if df is not None else 0, _ts(t0),
+                )
         except Exception:
             df = None
+            logger.warning(
+                "[仪表盘][market_overview] daily Tushare 拉取失败 date=%s 耗时=%s",
+                anchor, _ts(t0),
+            )
     if df is None or df.empty:
+        logger.warning("[仪表盘][market_overview] 无 daily 数据，返回 None 总耗时=%s", _ts(t_total))
         return None
     if not {"close", "pre_close", "amount"}.issubset(set(df.columns)):
         return None
@@ -121,21 +155,37 @@ def build_market_overview(anchor: date, limit_up_count_hint: int = 0) -> Optiona
     # --- Limit-up / limit-down detection ---
     up_limit_flag = pd.Series(False, index=df.index)
     down_limit_flag = pd.Series(False, index=df.index)
+    t0 = time.monotonic()
     try:
         lim_df = store.load(MarketTable.LIMIT, anchor)
     except Exception:
         lim_df = None
-    if (lim_df is None or lim_df.empty) and adapter is None:
-        try:
-            adapter = get_adapter()
-        except Exception:
-            adapter = None
-    if (lim_df is None or lim_df.empty) and adapter is not None:
-        try:
-            if hasattr(adapter, "_limit_table"):
-                lim_df = adapter._limit_table(anchor)  # type: ignore[attr-defined]
-        except Exception:
-            lim_df = None
+    if lim_df is not None and not lim_df.empty:
+        logger.info(
+            "[仪表盘][market_overview] limit 数据来源=本地缓存 date=%s rows=%d 耗时=%s",
+            anchor, len(lim_df), _ts(t0),
+        )
+    else:
+        if adapter is None:
+            try:
+                adapter = get_adapter()
+            except Exception:
+                adapter = None
+        if adapter is not None:
+            t0 = time.monotonic()
+            try:
+                if hasattr(adapter, "_limit_table"):
+                    lim_df = adapter._limit_table(anchor)  # type: ignore[attr-defined]
+                    logger.info(
+                        "[仪表盘][market_overview] limit 数据来源=Tushare stk_limit 接口 date=%s rows=%s 耗时=%s",
+                        anchor, len(lim_df) if lim_df is not None else 0, _ts(t0),
+                    )
+            except Exception:
+                lim_df = None
+                logger.warning(
+                    "[仪表盘][market_overview] limit Tushare 拉取失败 date=%s 耗时=%s",
+                    anchor, _ts(t0),
+                )
 
     if (
         lim_df is not None
@@ -154,21 +204,33 @@ def build_market_overview(anchor: date, limit_up_count_hint: int = 0) -> Optiona
     up_limit_count = int(up_limit_flag.sum())
     down_limit_count = int(down_limit_flag.sum())
     if up_limit_count == 0 and down_limit_count == 0:
+        t0 = time.monotonic()
         try:
             adapter = adapter or get_adapter()
             real_up, real_down = adapter.get_limit_counts(anchor)  # type: ignore[attr-defined]
             up_limit_count = int(real_up or 0)
             down_limit_count = int(real_down or 0)
+            logger.info(
+                "[仪表盘][market_overview] 涨跌停计数来源=Tushare limit_list_d 接口 "
+                "up=%d down=%d 耗时=%s",
+                up_limit_count, down_limit_count, _ts(t0),
+            )
         except Exception:
-            pass
+            logger.debug("[仪表盘][market_overview] 涨跌停计数回退失败 耗时=%s", _ts(t0))
 
     # --- Turnover delta vs previous trading day ---
     turnover_delta = 0.0
     try:
+        t0 = time.monotonic()
         days = [d for d in store.list_trade_days() if d < anchor]
         prev_day = days[-1] if days else None
         prev_df = None
-        if prev_day is None:
+        if prev_day is not None:
+            logger.info(
+                "[仪表盘][market_overview] 前一交易日=%s 来源=本地缓存目录 耗时=%s",
+                prev_day, _ts(t0),
+            )
+        else:
             for i in range(1, 15):
                 cand = anchor - timedelta(days=i)
                 try:
@@ -180,22 +242,41 @@ def build_market_overview(anchor: date, limit_up_count_hint: int = 0) -> Optiona
                     prev_df = cand_df
                     break
         if prev_day is None:
+            t_cal = time.monotonic()
             try:
                 adapter = adapter or get_adapter()
                 history_days = adapter.get_trade_days(anchor - timedelta(days=20), anchor)
                 prior_days = [d for d in history_days if d < anchor]
                 prev_day = prior_days[-1] if prior_days else None
+                logger.info(
+                    "[仪表盘][market_overview] 前一交易日=%s 来源=Tushare trade_cal 接口 耗时=%s",
+                    prev_day, _ts(t_cal),
+                )
             except Exception:
                 prev_day = None
+                logger.warning(
+                    "[仪表盘][market_overview] 查前一交易日失败(Tushare trade_cal) 耗时=%s",
+                    _ts(t_cal),
+                )
 
         if prev_day is not None:
+            t_prev = time.monotonic()
             if prev_df is None:
                 prev_df = store.load(MarketTable.DAILY, prev_day)
-            if prev_df is None or prev_df.empty:
+            if prev_df is not None and not prev_df.empty:
+                logger.info(
+                    "[仪表盘][market_overview] 前日 daily 来源=本地缓存 date=%s rows=%d 耗时=%s",
+                    prev_day, len(prev_df), _ts(t_prev),
+                )
+            else:
                 try:
                     adapter = adapter or get_adapter()
                     if hasattr(adapter, "_daily_market"):
                         prev_df = adapter._daily_market(prev_day)  # type: ignore[attr-defined]
+                        logger.info(
+                            "[仪表盘][market_overview] 前日 daily 来源=Tushare daily 接口 date=%s rows=%s 耗时=%s",
+                            prev_day, len(prev_df) if prev_df is not None else 0, _ts(t_prev),
+                        )
                 except Exception:
                     prev_df = None
             if prev_df is not None and not prev_df.empty and "amount" in prev_df.columns:
@@ -204,6 +285,8 @@ def build_market_overview(anchor: date, limit_up_count_hint: int = 0) -> Optiona
                 turnover_delta = round(float((amount.sum() - prev_amount.sum()) / 1e5), 2)
     except Exception:
         pass
+
+    logger.info("[仪表盘][market_overview] 构建完成 总耗时=%s", _ts(t_total))
 
     return {
         "total_turnover_yi": round(float(amount.sum()) / 1e5, 2),
@@ -241,16 +324,27 @@ def fetch_index_summaries(td: date) -> list[dict[str, Any]]:
     ]
     out: list[dict[str, Any]] = []
     start = td - timedelta(days=40)
+    t_total = time.monotonic()
     try:
         adapter = get_adapter()
     except Exception:
         return out
 
     for code, name in codes:
+        t0 = time.monotonic()
         try:
             bars = adapter.get_index_bars(code, start, td)
         except Exception:
+            logger.warning(
+                "[仪表盘][indices] %s(%s) Tushare index_daily 接口调用失败 耗时=%s",
+                name, code, _ts(t0),
+            )
             continue
+        logger.info(
+            "[仪表盘][indices] %s(%s) 数据来源=Tushare index_daily 接口 "
+            "range=%s~%s bars=%d 耗时=%s",
+            name, code, start, td, len(bars), _ts(t0),
+        )
         bars = sorted([b for b in bars if b.trade_date <= td], key=lambda x: x.trade_date)
         if not bars:
             continue
@@ -272,6 +366,8 @@ def fetch_index_summaries(td: date) -> list[dict[str, Any]]:
             "pct_change": round(today.pct_change, 2),
             "point_change": round(today.close - prev_close, 2),
         })
+
+    logger.info("[仪表盘][indices] 三大指数加载完成 总耗时=%s", _ts(t_total))
     return out
 
 
@@ -285,8 +381,15 @@ async def build_dashboard_response(trade_date: Optional[date] = None) -> dict[st
 
     market_overview 与 indices 并行加载，top_sectors 固定为空（已移除）。
     """
+    t_all = time.monotonic()
+    logger.info(
+        "========== [仪表盘] 开始构建 requested_date=%s ==========",
+        trade_date,
+    )
+
     td = resolve_dashboard_trade_date(trade_date)
     if not td:
+        logger.warning("[仪表盘] 无法确定交易日，返回空响应 总耗时=%s", _ts(t_all))
         return {
             "trade_date": None,
             "market_env": None,
@@ -295,7 +398,19 @@ async def build_dashboard_response(trade_date: Optional[date] = None) -> dict[st
             "indices": [],
         }
 
-    # Run blocking I/O in thread pool, in parallel
+    logger.info(
+        "[仪表盘] 数据需求清单（trade_date=%s）:\n"
+        "  ① 日期解析    → Tushare trade_cal（交易日历，如已有内存缓存则跳过远程）\n"
+        "  ② 市场总览    → 本地缓存 data/market/daily/{date}.json  回退→ Tushare daily\n"
+        "  ③ 涨跌停价    → 本地缓存 data/market/limit/{date}.json  回退→ Tushare stk_limit\n"
+        "  ④ 涨跌停计数  → 从③计算，兜底→ Tushare limit_list_d\n"
+        "  ⑤ 前日成交额  → 本地缓存 data/market/daily/{prev}.json  回退→ Tushare daily\n"
+        "  ⑥ 上证指数    → Tushare index_daily（无缓存，每次远程）\n"
+        "  ⑦ 深证成指    → Tushare index_daily（无缓存，每次远程）\n"
+        "  ⑧ 沪深300     → Tushare index_daily（无缓存，每次远程）",
+        td,
+    )
+
     loop = asyncio.get_running_loop()
 
     overview_task = loop.run_in_executor(None, build_market_overview, td, 0)
@@ -303,10 +418,18 @@ async def build_dashboard_response(trade_date: Optional[date] = None) -> dict[st
 
     overview, indices = await asyncio.gather(overview_task, indices_task)
 
+    logger.info(
+        "========== [仪表盘] 构建完成 trade_date=%s 总耗时=%s "
+        "| overview=%s indices=%d ==========",
+        td, _ts(t_all),
+        "有数据" if overview else "无数据",
+        len(indices) if indices else 0,
+    )
+
     return {
         "trade_date": td,
-        "market_env": None,  # env 依赖扫描数据，已移除
-        "top_sectors": [],   # 主线板块已移除
+        "market_env": None,
+        "top_sectors": [],
         "market_overview": overview,
         "indices": indices or [],
     }
