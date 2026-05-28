@@ -241,7 +241,7 @@ export default function AStrategyBacktest() {
             />
           </div>
           <p style={{ fontSize: "0.78rem", color: "var(--muted)", marginTop: "0.5rem" }}>
-            已处理 {activeRun?.progress || 0} / {activeRun?.total_days || "?"} 个交易日
+            已处理 {activeRun?.progress ?? 0} / {activeRun?.total_days ?? "?"} 个交易日
           </p>
         </div>
       )}
@@ -360,7 +360,9 @@ export default function AStrategyBacktest() {
               </tbody>
             </table>
             {trades.length === 0 && (
-              <p style={{ padding: "1rem", color: "var(--muted)" }}>本区间无成交</p>
+              <p style={{ padding: "1rem", color: "var(--muted)" }}>
+                暂无合适买入点（所选板块未满足A策略买入条件）
+              </p>
             )}
           </div>
         </>

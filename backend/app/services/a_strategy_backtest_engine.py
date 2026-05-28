@@ -67,14 +67,28 @@ class AStrategyBacktestEngine:
         run = await self.session.get(BacktestRun, run_id)
         if not run:
             return
+        logger.info(
+            "[A策略回测] 启动 run_id=%s 区间=%s~%s params=%s",
+            run_id,
+            run.start_date,
+            run.end_date,
+            run.params or {},
+        )
         run.status = "running"
-        await self.session.flush()
+        run.progress = 0
+        run.total_days = 0
+        await self.session.commit()
 
         try:
             days = self.adapter.get_trade_days(run.start_date, run.end_date)
             self._trade_days_cache = days
             run.total_days = len(days)
-            await self.session.flush()
+            logger.info(
+                "[A策略回测] run_id=%s 命中交易日=%d",
+                run_id,
+                len(days),
+            )
+            await self.session.commit()
 
             await self._run_strict(run_id, run, days)
 
@@ -96,6 +110,12 @@ class AStrategyBacktestEngine:
             raise ValueError("A策略回测需至少勾选一个板块")
 
         initial_capital = float(params.get("initial_capital", 1_000_000))
+        logger.info(
+            "[A策略回测] run_id=%s 选中板块=%d 初始资金=%.2f",
+            run_id,
+            len(sector_codes),
+            initial_capital,
+        )
 
         ingestion = IngestionService(self.session)
         scanner = ScanService(self.session, scoring_mode="a_strategy")
@@ -123,6 +143,16 @@ class AStrategyBacktestEngine:
         pending_sells: list[_PendingSell] = []
 
         for i, td in enumerate(days):
+            logger.info(
+                "[A策略回测] 进度 %d/%d trade_date=%s cash=%.2f 持仓=%d 待买=%d 待卖=%d",
+                i + 1,
+                len(days),
+                td,
+                cash,
+                len(positions),
+                len(pending_buys),
+                len(pending_sells),
+            )
             if pending_buys or pending_sells:
                 cash = await self._execute_pending(
                     run_id, td, cash, positions, all_trades,
@@ -131,12 +161,17 @@ class AStrategyBacktestEngine:
                 pending_buys.clear()
                 pending_sells.clear()
 
-            await ingestion.ingest_day(td)
+            # A策略严格回测仅依赖板块规则结果，不依赖当日大盘环境分。
+            await ingestion.ingest_day(td, skip_market_env=True)
             await scanner.run_scan(td)
-            run.progress = i + 1
-            await self.session.flush()
 
             score_map = await self._get_scores(td, sector_codes)
+            logger.info(
+                "[A策略回测] trade_date=%s 可用评分板块=%d/%d",
+                td,
+                len(score_map),
+                len(sector_codes),
+            )
 
             for sector_code in list(positions.keys()):
                 pos = positions[sector_code]
@@ -188,6 +223,14 @@ class AStrategyBacktestEngine:
                     entry_scores=_score_snapshot(score),
                     tier=str(getattr(score, "main_line_tier", "rotation") or "rotation"),
                 ))
+                logger.info(
+                    "[A策略回测] 生成买入信号 trade_date=%s sector=%s leader=%s(%s) tier=%s",
+                    td,
+                    getattr(score, "sector_name", sector_code),
+                    leader_code,
+                    leader_name,
+                    str(getattr(score, "main_line_tier", "rotation") or "rotation"),
+                )
 
             equity = self._calc_equity(cash, positions)
             equity_series.append(equity)
@@ -202,6 +245,17 @@ class AStrategyBacktestEngine:
                 equity=equity,
                 benchmark_equity=bench_abs,
             ))
+            run.progress = i + 1
+            await self.session.commit()
+            logger.info(
+                "[A策略回测] 日终 trade_date=%s equity=%.2f cash=%.2f 持仓=%d 待买=%d 待卖=%d",
+                td,
+                equity,
+                cash,
+                len(positions),
+                len(pending_buys),
+                len(pending_sells),
+            )
 
         if pending_sells and days:
             last_day = days[-1]

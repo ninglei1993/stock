@@ -1,5 +1,6 @@
 import asyncio
 from datetime import date, timedelta
+import logging
 import time
 from typing import Any, Optional
 
@@ -87,6 +88,7 @@ from app.services.a_strategy_manual_store import (
 )
 
 router = APIRouter(prefix="/api")
+logger = logging.getLogger(__name__)
 
 
 def _classify_tushare_error(msg: str) -> str:
@@ -2184,16 +2186,26 @@ async def _run_a_strategy_backtest_task(run_id: int) -> None:
     from app.services.backtest_context import clear_backtest_context, set_backtest_sector_codes
     from app.services.a_strategy_backtest_engine import AStrategyBacktestEngine
 
+    logger.info("[A策略回测] 后台任务启动 run_id=%s", run_id)
     async with AsyncSessionLocal() as session:
         run = await session.get(BacktestRun, run_id)
         try:
             if run:
                 codes = list((run.params or {}).get("sector_codes") or [])
                 set_backtest_sector_codes(codes)
+                logger.info(
+                    "[A策略回测] run_id=%s 板块数=%d 区间=%s~%s",
+                    run_id,
+                    len(codes),
+                    run.start_date,
+                    run.end_date,
+                )
             engine = AStrategyBacktestEngine(session)
             await engine.run(run_id)
             await session.commit()
+            logger.info("[A策略回测] 后台任务完成 run_id=%s", run_id)
         except Exception:
+            logger.exception("[A策略回测] 后台任务异常 run_id=%s", run_id)
             await session.rollback()
             async with AsyncSessionLocal() as s2:
                 run_fail = await s2.get(BacktestRun, run_id)
@@ -2222,6 +2234,15 @@ async def create_a_strategy_backtest(
         end_date=end_date,
         params=params,
         status="pending",
+    )
+    logger.info(
+        "[A策略回测] 创建任务 请求区间=%s~%s 校准区间=%s~%s 板块数=%d 初始资金=%s",
+        body.start_date,
+        body.end_date,
+        start_date,
+        end_date,
+        len(codes),
+        params.get("initial_capital"),
     )
     db.add(run)
     await db.flush()
@@ -2303,14 +2324,21 @@ async def a_strategy_backtest_report(run_id: int, db: AsyncSession = Depends(get
                 )
                 report_metrics["annual_return"] = report_metrics["total_return"]
 
+    trade_mode_note = (
+        "回测标的为各概念板块的龙头个股。"
+        "满足A策略6条硬性规则后，次日开盘价买入；"
+        "退出信号触发或止损-8%时，次日开盘价卖出。"
+    )
+    if (report_metrics or {}).get("trade_count", 0) == 0:
+        trade_mode_note += (
+            "本区间暂无合适买入点：所选板块未同时满足A策略买入条件，"
+            "因此未产生有效买卖成交。"
+        )
+
     return BacktestReport(
         run=BacktestRunOut.model_validate(run),
         strategy_name_cn="A策略严格回测",
-        trade_mode_note=(
-            "回测标的为各概念板块的龙头个股。"
-            "满足A策略6条硬性规则后，次日开盘价买入；"
-            "退出信号触发或止损-8%时，次日开盘价卖出。"
-        ),
+        trade_mode_note=trade_mode_note,
         metrics=report_metrics,
         equity_curve=equity_curve,
         stage_win_rates=metrics.extra.get("stage_win_rates", {}) if metrics and metrics.extra else {},

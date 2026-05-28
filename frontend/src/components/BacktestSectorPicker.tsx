@@ -15,17 +15,48 @@ export default function BacktestSectorPicker({ selected, onChange, disabled }: P
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const load = useCallback(() => {
+  const load = useCallback(async () => {
     setLoading(true);
-    api
-      .backtestSectorCandidates()
-      .then((res) => {
-        setSectors(res.sectors);
-        setTradeDate(res.trade_date);
-        onChange(new Set(res.sectors.map((s) => s.sector_code)));
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : "加载板块失败"))
-      .finally(() => setLoading(false));
+    setError("");
+    try {
+      const [backtestRes, scanRes] = await Promise.all([
+        api.backtestSectorCandidates().catch(() => null),
+        api.getScanSectors(),
+      ]);
+
+      const fallbackSectors: BacktestSectorCandidate[] = scanRes.universe.map((item, idx) => ({
+        sector_code: item.sector_code,
+        sector_name: item.sector_name,
+        rank: idx + 1,
+        total_score: 0,
+        stage: "unknown",
+        persistence_score: 0,
+        capital_score: 0,
+        breadth_score: 0,
+        leader_score: 0,
+        relative_score: 0,
+      }));
+
+      const resolvedSectors =
+        backtestRes && backtestRes.sectors.length > 0 ? backtestRes.sectors : fallbackSectors;
+      setSectors(resolvedSectors);
+      setTradeDate(backtestRes?.trade_date ?? null);
+
+      const availableCodes = new Set(resolvedSectors.map((item) => item.sector_code));
+      const preferredScanSelected =
+        scanRes.use_explicit_selection && scanRes.selected_codes.length > 0
+          ? scanRes.selected_codes.filter((code) => availableCodes.has(code))
+          : [];
+      const defaultSelectedCodes =
+        preferredScanSelected.length > 0
+          ? preferredScanSelected
+          : resolvedSectors.map((item) => item.sector_code);
+      onChange(new Set(defaultSelectedCodes));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "加载板块失败");
+    } finally {
+      setLoading(false);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅挂载时默认全选
   }, []);
 
@@ -73,7 +104,8 @@ export default function BacktestSectorPicker({ selected, onChange, disabled }: P
   return (
     <div className="sector-scan-picker">
       <p style={{ fontSize: "0.78rem", color: "var(--muted)", margin: "0 0 0.5rem" }}>
-        回测板块（来自仪表盘扫盘 {tradeDate || "—"}）已选 <strong>{selected.size}</strong> / {sectors.length}
+        回测板块（{tradeDate ? `来自仪表盘扫盘 ${tradeDate}` : "使用扫盘Tab板块配置"}）已选{" "}
+        <strong>{selected.size}</strong> / {sectors.length}
         {selected.size === 0 ? "（请至少勾选一个）" : ""}
       </p>
       <div
@@ -131,7 +163,9 @@ export default function BacktestSectorPicker({ selected, onChange, disabled }: P
                 <span>
                   <strong>#{c.rank}</strong> {c.sector_name}
                   <span style={{ color: "var(--muted)", marginLeft: "0.35rem" }}>
-                    {c.total_score.toFixed(0)}分 · {STAGE_LABEL[c.stage] || c.stage}
+                    {c.sector_code}
+                    {c.total_score > 0 ? ` · ${c.total_score.toFixed(0)}分` : ""}
+                    {c.stage !== "unknown" ? ` · ${STAGE_LABEL[c.stage] || c.stage}` : ""}
                   </span>
                 </span>
               </label>
